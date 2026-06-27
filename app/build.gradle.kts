@@ -24,7 +24,7 @@ private data class LocalBuildMeta(
 
 private val isGithubActionsBuild = System.getenv("GITHUB_ACTIONS") == "true"
 private val localBuildAbis = listOf("arm64-v8a")
-private val githubActionsBuildAbis = listOf("arm64-v8a", "x86_64")
+private val githubActionsBuildAbis = listOf("arm64-v8a")
 
 private fun shouldBumpLocalBuildNumber(taskNames: List<String>): Boolean {
     if (taskNames.isEmpty()) return false

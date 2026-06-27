@@ -140,8 +140,7 @@ jobs:
           sed -i '/^android\.aapt2FromMavenOverride=/d' gradle.properties
           echo "Effective gradle.properties:"
           cat gradle.properties
-
-      - name: Build release APK and AAB
+      - name: Build release APK
         shell: bash
         run: |
           set -euo pipefail
@@ -149,12 +148,12 @@ jobs:
 
           FLAVOR_CAP="${{ steps.meta.outputs.flavor_cap }}"
           APK_TASK=":app:assemble${FLAVOR_CAP}Release"
-          AAB_TASK=":app:bundle${FLAVOR_CAP}Release"
 
-          echo "Running $APK_TASK and $AAB_TASK"
-          ./gradlew "$APK_TASK" "$AAB_TASK" --no-daemon --stacktrace
+          echo "Running $APK_TASK"
+          ./gradlew "$APK_TASK" --no-daemon --stacktrace
 
-      - name: Collect release files
+
+      - name: Collect release APK
         id: collect
         shell: bash
         run: |
@@ -163,14 +162,11 @@ jobs:
           FLAVOR="${{ steps.meta.outputs.flavor }}"
           DIST_DIR="dist"
           APK_DIR="app/build/outputs/apk/${FLAVOR}/release"
-          AAB_DIR="app/build/outputs/bundle/${FLAVOR}Release"
-          MAPPING_FILE="app/build/outputs/mapping/${FLAVOR}Release/mapping.txt"
 
           mkdir -p "$DIST_DIR"
 
           shopt -s nullglob
           apk_files=("$APK_DIR"/*.apk)
-          aab_files=("$AAB_DIR"/*.aab)
           shopt -u nullglob
 
           if (( ${#apk_files[@]} == 0 )); then
@@ -179,16 +175,7 @@ jobs:
           fi
 
           cp "${apk_files[@]}" "$DIST_DIR/"
-
-          if (( ${#aab_files[@]} > 0 )); then
-            cp "${aab_files[@]}" "$DIST_DIR/"
-          fi
-
-          if [[ -f "$MAPPING_FILE" ]]; then
-            cp "$MAPPING_FILE" "$DIST_DIR/${FLAVOR}-mapping.txt"
-          fi
-
-          (cd "$DIST_DIR" && sha256sum * > SHA256SUMS)
+          (cd "$DIST_DIR" && sha256sum *.apk > SHA256SUMS)
 
           echo "dist_dir=$DIST_DIR" >> "$GITHUB_OUTPUT"
           echo "Collected files:"

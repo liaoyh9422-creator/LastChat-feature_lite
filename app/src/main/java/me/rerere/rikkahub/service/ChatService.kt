@@ -1,0 +1,5990 @@
+package me.rerere.rikkahub.service
+
+import android.Manifest
+import android.app.Application
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Icon
+import android.net.Uri
+import android.util.Log
+import android.webkit.MimeTypeMap
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.res.ResourcesCompat
+import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import me.rerere.ai.core.InputSchema
+import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.Tool
+import me.rerere.ai.provider.ensureBuiltInSearchTool
+import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.ModelAbility
+import me.rerere.ai.provider.ProviderManager
+import me.rerere.ai.provider.supportsBuiltInSearch
+import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.provider.withoutBuiltInSearchTools
+import me.rerere.ai.ui.AskUserState
+import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.ui.finishReasoning
+import me.rerere.ai.ui.truncate
+import me.rerere.common.android.Logging
+import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
+import me.rerere.rikkahub.R
+import me.rerere.rikkahub.RouteActivity
+import me.rerere.rikkahub.data.ai.GenerationChunk
+import me.rerere.rikkahub.data.ai.GenerationHandler
+import me.rerere.rikkahub.data.ai.AIRequestLogManager
+import me.rerere.rikkahub.data.ai.AIRequestSource
+import me.rerere.rikkahub.data.ai.ToolApprovalHandler
+import me.rerere.rikkahub.data.ai.ToolApprovalRequest
+import me.rerere.rikkahub.data.ai.AskUserHandler
+import me.rerere.rikkahub.data.ai.AskUserRequest
+import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.prompts.DEFAULT_CONTEXT_SUMMARY_PROMPT
+import me.rerere.rikkahub.data.ai.rag.EmbeddingService
+import me.rerere.rikkahub.data.ai.tools.ASK_USER_SYSTEM_PROMPT_TEMPLATE
+import me.rerere.rikkahub.data.ai.tools.EVAL_PYTHON_SYSTEM_PROMPT_TEMPLATE
+import me.rerere.rikkahub.data.ai.tools.LorebookTools
+import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+import me.rerere.rikkahub.data.ai.tools.LocalTools
+import me.rerere.rikkahub.data.ai.tools.RUN_SKILL_SCRIPT_SYSTEM_PROMPT_TEMPLATE
+import me.rerere.rikkahub.data.ai.tools.SCRIPTABLE_SKILL_LIST_VARIABLE
+import me.rerere.rikkahub.data.ai.tools.SearchAgentProgressStore
+import me.rerere.rikkahub.data.ai.tools.SearchAgentTools
+import me.rerere.rikkahub.data.ai.tools.SkillScriptRunner
+import me.rerere.rikkahub.data.ai.tools.WORKSPACE_COMMON_RULES_PROMPT
+import me.rerere.rikkahub.data.ai.tools.WORKSPACE_COMMON_RULES_VARIABLE
+import me.rerere.rikkahub.data.ai.tools.renderToolSystemPromptTemplate
+import me.rerere.rikkahub.data.ai.tools.workspaceToolSystemPromptTemplate
+import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
+import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
+import me.rerere.rikkahub.data.ai.transformers.OcrTransformer
+import me.rerere.rikkahub.data.ai.transformers.PlaceholderTransformer
+import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
+import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
+import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
+import me.rerere.rikkahub.data.datastore.KeepAliveMode
+import me.rerere.rikkahub.data.datastore.ConversationWorkDirBinding
+import me.rerere.rikkahub.data.datastore.ConversationWorkDirMode
+import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.applyRememberedWorkspaceToConversation
+import me.rerere.rikkahub.data.datastore.clearConversationWorkspace
+import me.rerere.rikkahub.data.datastore.findModelById
+import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.datastore.getAssistantById
+import me.rerere.rikkahub.data.datastore.getConversationWorkspaceRootTreeUri
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.getCurrentChatModel
+import me.rerere.rikkahub.data.datastore.getEffectiveWorkspaceRootTreeUri
+import me.rerere.rikkahub.data.model.ChatTarget
+import me.rerere.rikkahub.data.model.AssistantSearchMode
+import me.rerere.rikkahub.data.model.Avatar
+import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.GroupChatSeat
+import me.rerere.rikkahub.data.model.GroupChatSeatOverrides
+import me.rerere.rikkahub.data.model.GroupChatTemplate
+import me.rerere.rikkahub.data.model.Skill
+import me.rerere.rikkahub.data.model.buildSeatDisplayNames
+import me.rerere.rikkahub.data.model.id
+import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.data.repository.LorebookEntryRevisionRepository
+import me.rerere.rikkahub.data.repository.MemoryRepository
+import me.rerere.rikkahub.data.repository.ModelQuotaRepository
+import me.rerere.rikkahub.data.repository.QuotaUsageResult
+import me.rerere.rikkahub.data.repository.ToolResultArchiveRepository
+import me.rerere.rikkahub.utils.JsonInstant
+import me.rerere.rikkahub.utils.JsonInstantPretty
+import me.rerere.rikkahub.utils.SkillScriptPathUtils
+import me.rerere.rikkahub.utils.WorkspaceSync
+import me.rerere.rikkahub.utils.WorkspaceSyncLimits
+import me.rerere.rikkahub.utils.applyPlaceholders
+import me.rerere.rikkahub.utils.deleteChatFiles
+import me.rerere.rikkahub.utils.jsonPrimitiveOrNull
+import me.rerere.search.SearchService
+import me.rerere.search.SearchServiceOptions
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileInputStream
+import java.time.Instant
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.uuid.Uuid
+
+private const val TAG = "ChatService"
+private const val CHAT_GENERATION_DONE_NOTIFICATION_ID = 1
+private const val FALLBACK_TITLE_MAX_CODE_POINTS = 15
+private const val OLDER_HISTORY_LOAD_BATCH_SIZE = 120
+private const val META_ANTHROPIC_TYPE = "anthropic_type"
+private const val TYPE_SERVER_TOOL_USE = "server_tool_use"
+
+private val inputTransformers by lazy {
+    listOf(
+        PlaceholderTransformer,
+        DocumentAsPromptTransformer,
+        OcrTransformer,
+    )
+}
+
+private val outputTransformers by lazy {
+    listOf(
+        ThinkTagTransformer,
+        Base64ImageToLocalFileTransformer,
+        RegexOutputTransformer,
+    )
+}
+
+private enum class GenerationCancelReason {
+    USER,
+    NON_USER,
+}
+
+private data class ContinueCandidate(
+    val message: UIMessage,
+    val nodeIndex: Int,
+    val originalText: String,
+)
+
+class ChatService(
+    private val context: Application,
+    private val appScope: AppScope,
+    private val settingsStore: SettingsStore,
+    private val conversationRepo: ConversationRepository,
+    private val toolResultArchiveRepository: ToolResultArchiveRepository,
+    private val memoryRepository: MemoryRepository,
+    private val generationHandler: GenerationHandler,
+    private val requestLogManager: AIRequestLogManager,
+    private val templateTransformer: TemplateTransformer,
+    private val providerManager: ProviderManager,
+    private val embeddingService: EmbeddingService,
+    private val lorebookEntryRevisionRepository: LorebookEntryRevisionRepository,
+    private val localTools: LocalTools,
+    private val okHttpClient: OkHttpClient,
+    val mcpManager: McpManager,
+    private val modelQuotaRepo: ModelQuotaRepository,
+    val searchAgentProgressStore: SearchAgentProgressStore,
+) {
+    // 存储每个对话的状态
+    private val conversations = ConcurrentHashMap<Uuid, MutableStateFlow<Conversation>>()
+
+    private val pendingUiWelcomePhraseForAppContext = ConcurrentHashMap<Uuid, String>()
+
+    // 记录哪些conversation有VM引用
+    private val conversationReferences = ConcurrentHashMap<Uuid, Int>()
+
+    // 记录哪些对话是临时对话（不持久化、不使用记忆）
+    private val temporaryConversations = ConcurrentHashMap.newKeySet<Uuid>()
+
+    private val lastInjectedMemoriesByConversationAndAssistant = ConcurrentHashMap<String, List<AssistantMemory>>()
+
+    private val liveUpdateNotifier = ChatLiveUpdateNotifier(context)
+    private val liveUpdateSessionIds = ConcurrentHashMap<Uuid, Long>()
+    private val liveUpdateStates = ConcurrentHashMap<Uuid, ChatLiveUpdateState>()
+    private val liveUpdateLastNotifyAtMs = ConcurrentHashMap<Uuid, Long>()
+    private val liveUpdateLastNotifiedState = ConcurrentHashMap<Uuid, ChatLiveUpdateState>()
+    private val liveUpdateSmallIcons = ConcurrentHashMap<Uuid, Icon>()
+    private val liveUpdateLargeIcons = ConcurrentHashMap<Uuid, Icon>()
+    private val contextSummaryInProgressConversations = ConcurrentHashMap.newKeySet<Uuid>()
+
+    private val keepAliveActiveGenerationCount = AtomicInteger(0)
+
+    private val skillScriptRunner by lazy { SkillScriptRunner(context) }
+    private val skillScriptMutexes = ConcurrentHashMap<Uuid, Mutex>()
+    private val olderHistoryLoadMutexes = ConcurrentHashMap<Uuid, Mutex>()
+
+    private val toolApprovalEarlyResponses = ConcurrentHashMap<String, Boolean>()
+    private val toolApprovalDeferreds = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    private val askUserEarlyResponses = ConcurrentHashMap<String, String>()
+    private val askUserDeferreds = ConcurrentHashMap<String, CompletableDeferred<String>>()
+
+    private fun toolApprovalKey(conversationId: Uuid, toolCallId: String): String {
+        return "${conversationId}:${toolCallId}"
+    }
+
+    fun respondToolApproval(conversationId: Uuid, toolCallId: String, approved: Boolean) {
+        if (toolCallId.isBlank()) return
+        val key = toolApprovalKey(conversationId, toolCallId)
+        val deferred = toolApprovalDeferreds[key]
+        if (deferred != null) {
+            deferred.complete(approved)
+        } else {
+            toolApprovalEarlyResponses[key] = approved
+        }
+    }
+
+    private suspend fun awaitToolApproval(request: ToolApprovalRequest): Boolean {
+        if (request.toolCallId.isBlank()) return false
+        val key = toolApprovalKey(request.conversationId, request.toolCallId)
+        toolApprovalEarlyResponses.remove(key)?.let { early ->
+            return early
+        }
+        val deferred = CompletableDeferred<Boolean>()
+        toolApprovalDeferreds[key] = deferred
+        try {
+            return deferred.await()
+        } finally {
+            toolApprovalDeferreds.remove(key)
+        }
+    }
+
+    private fun askUserKey(conversationId: Uuid, toolCallId: String): String {
+        return "ask:${conversationId}:${toolCallId}"
+    }
+
+    fun respondAskUser(conversationId: Uuid, toolCallId: String, answer: String) {
+        if (toolCallId.isBlank()) return
+        val key = askUserKey(conversationId, toolCallId)
+        val deferred = askUserDeferreds[key]
+        if (deferred != null) {
+            deferred.complete(answer)
+        } else {
+            askUserEarlyResponses[key] = answer
+        }
+    }
+
+    private suspend fun awaitAskUserResponse(conversationId: Uuid, toolCallId: String): String {
+        if (toolCallId.isBlank()) return ""
+        val key = askUserKey(conversationId, toolCallId)
+        askUserEarlyResponses.remove(key)?.let { early ->
+            return early
+        }
+        val deferred = CompletableDeferred<String>()
+        askUserDeferreds[key] = deferred
+        try {
+            return deferred.await()
+        } finally {
+            askUserDeferreds.remove(key)
+        }
+    }
+
+    fun setPendingUiWelcomePhraseForAppContext(conversationId: Uuid, welcomePhrase: String) {
+        val normalized = welcomePhrase.replace("\r", "").trim()
+        if (normalized.isBlank()) return
+        pendingUiWelcomePhraseForAppContext[conversationId] = normalized
+    }
+
+    // 存储每个对话的生成任务状态
+    private val _generationJobs = MutableStateFlow<Map<Uuid, Job?>>(emptyMap())
+    private val generationJobs: StateFlow<Map<Uuid, Job?>> = _generationJobs
+        .asStateFlow()
+    private val generationCancelReasons = ConcurrentHashMap<Uuid, GenerationCancelReason>()
+
+    // 错误流
+    private val _errorFlow = MutableSharedFlow<Throwable>()
+    val errorFlow: SharedFlow<Throwable> = _errorFlow.asSharedFlow()
+
+    // 生成完成流
+    private val _generationDoneFlow = MutableSharedFlow<Uuid>()
+    val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
+
+    // 配额警告流
+    private val _quotaWarningFlow = MutableSharedFlow<QuotaUsageResult>()
+    val quotaWarningFlow: SharedFlow<QuotaUsageResult> = _quotaWarningFlow.asSharedFlow()
+
+    // 前台状态管理
+    private val _isForeground = MutableStateFlow(false)
+    val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
+
+    private val lifecycleObserver = LifecycleEventObserver { _, event ->
+        when (event) {
+            Lifecycle.Event.ON_START -> {
+                _isForeground.value = true
+                appScope.launch {
+                    cancelOngoingLiveUpdates()
+                    cancelGenerationDoneNotification()
+                }
+            }
+
+            Lifecycle.Event.ON_STOP -> {
+                _isForeground.value = false
+                appScope.launch { notifyOngoingLiveUpdates(force = true) }
+            }
+
+            else -> {}
+        }
+    }
+
+    init {
+        // 添加生命周期观察者
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
+    }
+
+    private fun buildMemoryCacheKey(conversationId: Uuid, assistantId: String): String {
+        return "${conversationId}:${assistantId}"
+    }
+
+    private fun filterMemoriesForRagOptions(
+        memories: List<AssistantMemory>,
+        includeCore: Boolean,
+        includeEpisodes: Boolean,
+    ): List<AssistantMemory> {
+        if (includeCore && includeEpisodes) return memories
+        return memories.filter { memory ->
+            when (memory.type) {
+                0 -> includeCore // CORE
+                1 -> includeEpisodes // EPISODIC
+                else -> true
+            }
+        }
+    }
+
+    fun cleanup() = runCatching {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
+        _generationJobs.value.values.forEach { it?.cancel() }
+    }
+
+    private fun shouldUseLiveUpdate(settings: Settings): Boolean {
+        val display = settings.displaySetting
+        return display.enableNotificationOnMessageGeneration && display.enableLiveUpdate
+    }
+
+    private fun shouldUseKeepAliveDuringGeneration(settings: Settings): Boolean {
+        val display = settings.displaySetting
+        if (!display.enableKeepAliveNotification) return false
+        if (display.keepAliveMode != KeepAliveMode.GENERATION) return false
+        return !display.enableLiveUpdate
+    }
+
+    private fun startLiveUpdateSession(conversationId: Uuid): Long {
+        ChatLiveUpdateDismissalTracker.clear(conversationId)
+        val sessionId = System.currentTimeMillis()
+        liveUpdateSessionIds[conversationId] = sessionId
+        liveUpdateStates[conversationId] = ChatLiveUpdateState.WAITING
+        liveUpdateLastNotifyAtMs.remove(conversationId)
+        liveUpdateLastNotifiedState.remove(conversationId)
+        liveUpdateSmallIcons.remove(conversationId)
+        liveUpdateLargeIcons.remove(conversationId)
+        liveUpdateSmallIcons[conversationId] = Icon.createWithResource(context, R.drawable.ic_launcher_monochrome)
+        return sessionId
+    }
+
+    private fun clearLiveUpdateSession(conversationId: Uuid) {
+        val lastState = liveUpdateLastNotifiedState[conversationId] ?: liveUpdateStates[conversationId]
+        if (lastState?.isOngoing() == true) {
+            liveUpdateNotifier.cancel(conversationId)
+        }
+        liveUpdateSessionIds.remove(conversationId)
+        liveUpdateStates.remove(conversationId)
+        liveUpdateLastNotifyAtMs.remove(conversationId)
+        liveUpdateLastNotifiedState.remove(conversationId)
+        liveUpdateSmallIcons.remove(conversationId)
+        liveUpdateLargeIcons.remove(conversationId)
+    }
+
+    private fun cancelOngoingLiveUpdates() {
+        liveUpdateStates.forEach { (conversationId, state) ->
+            if (state.isOngoing()) {
+                liveUpdateNotifier.cancel(conversationId)
+            }
+        }
+    }
+
+    private fun cancelGenerationDoneNotification() {
+        NotificationManagerCompat.from(context).cancel(CHAT_GENERATION_DONE_NOTIFICATION_ID)
+    }
+
+    private fun notifyOngoingLiveUpdates(force: Boolean) {
+        val settings = settingsStore.settingsFlow.value
+        if (!shouldUseLiveUpdate(settings)) return
+        if (isForeground.value) return
+
+        liveUpdateStates.forEach { (conversationId, state) ->
+            notifyLiveUpdate(conversationId, state, settings = settings, force = force, error = null)
+        }
+    }
+
+    private fun notifyLiveUpdate(
+        conversationId: Uuid,
+        state: ChatLiveUpdateState,
+        settings: Settings,
+        force: Boolean,
+        error: Throwable?,
+    ) {
+        if (!shouldUseLiveUpdate(settings)) return
+        if (isForeground.value) return
+
+        val sessionId = liveUpdateSessionIds[conversationId] ?: return
+
+        val now = System.currentTimeMillis()
+        val lastAt = liveUpdateLastNotifyAtMs[conversationId] ?: 0L
+        val lastState = liveUpdateLastNotifiedState[conversationId]
+
+        val shouldNotify = force || lastState != state || now - lastAt >= 600L
+        if (!shouldNotify) return
+
+        liveUpdateLastNotifyAtMs[conversationId] = now
+        liveUpdateLastNotifiedState[conversationId] = state
+
+        val (contentText, bigText) = buildLiveUpdateTexts(conversationId, state, error)
+        val title = buildLiveUpdateTitle(conversationId, settings)
+        val smallIcon = liveUpdateSmallIcons[conversationId]
+        val largeIcon = liveUpdateLargeIcons[conversationId]
+        liveUpdateNotifier.notify(
+            conversationId = conversationId,
+            sessionId = sessionId,
+            state = state,
+            title = title,
+            contentText = contentText,
+            bigText = bigText,
+            smallIcon = smallIcon,
+            largeIcon = largeIcon,
+        )
+    }
+
+    private fun buildLiveUpdateTitle(conversationId: Uuid, settings: Settings): String {
+        val conversation = getConversationFlow(conversationId).value
+        val assistantName = settings.getAssistantById(conversation.assistantId)?.name
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        return assistantName ?: context.getString(R.string.app_name)
+    }
+
+    private fun warmUpLiveUpdateIcon(conversationId: Uuid, settings: Settings) {
+        if (!shouldUseLiveUpdate(settings)) return
+        if (liveUpdateSmallIcons.containsKey(conversationId) && liveUpdateLargeIcons.containsKey(conversationId)) return
+
+        val sessionId = liveUpdateSessionIds[conversationId] ?: return
+        val conversation = getConversationFlow(conversationId).value
+        val assistant = settings.getAssistantById(conversation.assistantId) ?: return
+
+        appScope.launch(Dispatchers.IO) {
+            val small = buildAssistantAvatarSmallIcon(assistant.name, assistant.avatar)
+            val large = buildAssistantAvatarLargeIcon(assistant.name, assistant.avatar)
+            if (small == null && large == null) return@launch
+
+            if (liveUpdateSessionIds[conversationId] != sessionId) return@launch
+            small?.let { liveUpdateSmallIcons[conversationId] = it }
+            large?.let { liveUpdateLargeIcons[conversationId] = it }
+
+            val state = liveUpdateStates[conversationId] ?: return@launch
+            notifyLiveUpdate(
+                conversationId = conversationId,
+                state = state,
+                settings = settings,
+                force = true,
+                error = null,
+            )
+        }
+    }
+
+    private fun buildAssistantAvatarSmallIcon(name: String, avatar: Avatar): Icon? {
+        return when (avatar) {
+            is Avatar.Resource -> {
+                val drawable = runCatching {
+                    ResourcesCompat.getDrawable(context.resources, avatar.id, context.theme)
+                }.getOrNull()
+                if (drawable == null || drawable is BitmapDrawable) {
+                    null
+                } else {
+                    Icon.createWithResource(context, avatar.id)
+                }
+            }
+            is Avatar.Emoji -> buildEmojiSmallIcon(avatar.content)
+            is Avatar.Image -> null
+            is Avatar.Dummy -> buildTextSmallIcon(name)
+        }
+    }
+
+    private fun buildAssistantAvatarLargeIcon(name: String, avatar: Avatar): Icon? {
+        return when (avatar) {
+            is Avatar.Resource -> {
+                val drawable = runCatching {
+                    ResourcesCompat.getDrawable(context.resources, avatar.id, context.theme)
+                }.getOrNull()
+                if (drawable is BitmapDrawable) {
+                    val scaled = scaleCenterCropSquare(drawable.bitmap, size = 160)
+                    Icon.createWithAdaptiveBitmap(scaled)
+                } else {
+                    Icon.createWithResource(context, avatar.id)
+                }
+            }
+            is Avatar.Emoji -> buildEmojiLargeIcon(avatar.content)
+            is Avatar.Image -> buildImageLargeIcon(avatar.url) ?: buildTextLargeIcon(name)
+            is Avatar.Dummy -> buildTextLargeIcon(name)
+        }
+    }
+
+    private fun buildEmojiSmallIcon(emoji: String): Icon? {
+        val normalized = emoji.trim()
+        if (normalized.isBlank()) return null
+
+        val size = 108
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = size * 0.56f
+        }
+        val fm = textPaint.fontMetrics
+        val x = size / 2f
+        val y = size / 2f - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(normalized, x, y, textPaint)
+
+        return Icon.createWithBitmap(bitmap)
+    }
+
+    private fun buildTextSmallIcon(name: String): Icon? {
+        val normalized = name.trim().takeIf { it.isNotBlank() }
+            ?.firstOrNull()
+            ?.uppercaseChar()
+            ?.toString()
+            ?: return null
+
+        val size = 108
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = size * 0.62f
+        }
+        val fm = textPaint.fontMetrics
+        val x = size / 2f
+        val y = size / 2f - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(normalized, x, y, textPaint)
+
+        return Icon.createWithBitmap(bitmap)
+    }
+
+    private fun buildEmojiLargeIcon(emoji: String): Icon? {
+        val normalized = emoji.trim()
+        if (normalized.isBlank()) return null
+
+        val size = 160
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFE0E0E0.toInt()
+        }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint)
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = size * 0.56f
+        }
+        val fm = textPaint.fontMetrics
+        val x = size / 2f
+        val y = size / 2f - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(normalized, x, y, textPaint)
+
+        return Icon.createWithAdaptiveBitmap(bitmap)
+    }
+
+    private fun buildTextLargeIcon(name: String): Icon? {
+        val normalized = name.trim().takeIf { it.isNotBlank() }
+            ?.firstOrNull()
+            ?.uppercaseChar()
+            ?.toString()
+            ?: return null
+
+        val size = 160
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFE0E0E0.toInt()
+        }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint)
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = size * 0.62f
+        }
+        val fm = textPaint.fontMetrics
+        val x = size / 2f
+        val y = size / 2f - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(normalized, x, y, textPaint)
+
+        return Icon.createWithAdaptiveBitmap(bitmap)
+    }
+
+    private fun buildImageLargeIcon(url: String): Icon? {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase()
+        if (scheme == "http" || scheme == "https") {
+            val bitmap = decodeSampledBitmapFromHttpUrl(url, reqSize = 256) ?: return null
+            val scaled = scaleCenterCropSquare(bitmap, size = 160)
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return Icon.createWithAdaptiveBitmap(scaled)
+        }
+
+        if (scheme == "file") {
+            val path = uri.path
+            if (!path.isNullOrBlank()) {
+                val bitmap = decodeSampledBitmapFromFile(File(path), reqSize = 256) ?: return null
+                val scaled = scaleCenterCropSquare(bitmap, size = 160)
+                if (!bitmap.isRecycled) bitmap.recycle()
+                return Icon.createWithAdaptiveBitmap(scaled)
+            }
+        }
+
+        val bitmap = decodeSampledBitmapFromUri(uri, reqSize = 256) ?: return null
+        val scaled = scaleCenterCropSquare(bitmap, size = 160)
+        if (!bitmap.isRecycled) bitmap.recycle()
+        return Icon.createWithAdaptiveBitmap(scaled)
+    }
+
+    private fun decodeSampledBitmapFromFile(file: File, reqSize: Int): Bitmap? {
+        fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+            val (height, width) = options.outHeight to options.outWidth
+            var inSampleSize = 1
+            if (height > reqHeight || width > reqWidth) {
+                var halfHeight = height / 2
+                var halfWidth = width / 2
+                while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                    inSampleSize *= 2
+                }
+            }
+            return inSampleSize.coerceAtLeast(1)
+        }
+
+        return runCatching {
+            if (!file.exists()) {
+                Log.w(TAG, "decodeSampledBitmapFromFile failed: not exists path=${file.absolutePath}")
+                return@runCatching null
+            }
+            if (!file.canRead()) {
+                Log.w(TAG, "decodeSampledBitmapFromFile failed: not readable path=${file.absolutePath}")
+                return@runCatching null
+            }
+            if (file.length() > 25L * 1024 * 1024) {
+                Log.w(TAG, "decodeSampledBitmapFromFile failed: too large (${file.length()}B) path=${file.absolutePath}")
+                return@runCatching null
+            }
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            FileInputStream(file).use { input ->
+                BitmapFactory.decodeStream(input, null, boundsOptions)
+            }
+            if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+                Log.w(TAG, "decodeSampledBitmapFromFile failed: invalid bounds path=${file.absolutePath}")
+                return@runCatching null
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = calculateInSampleSize(boundsOptions, reqSize, reqSize)
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            FileInputStream(file).use { input ->
+                BitmapFactory.decodeStream(input, null, decodeOptions)
+            }
+        }.getOrElse {
+            Log.w(TAG, "decodeSampledBitmapFromFile failed: path=${file.absolutePath} msg=${it.message}", it)
+            null
+        }
+    }
+
+    private fun decodeSampledBitmapFromHttpUrl(url: String, reqSize: Int): Bitmap? {
+        fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+            val (height, width) = options.outHeight to options.outWidth
+            var inSampleSize = 1
+            if (height > reqHeight || width > reqWidth) {
+                var halfHeight = height / 2
+                var halfWidth = width / 2
+                while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                    inSampleSize *= 2
+                }
+            }
+            return inSampleSize.coerceAtLeast(1)
+        }
+
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "image/*")
+                .get()
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "decodeSampledBitmapFromHttpUrl failed: http=${response.code} url=$url")
+                    return@runCatching null
+                }
+
+                val body = response.body ?: return@runCatching null
+                val contentLength = body.contentLength()
+                if (contentLength > 25L * 1024 * 1024) {
+                    Log.w(TAG, "decodeSampledBitmapFromHttpUrl failed: too large (${contentLength}B) url=$url")
+                    return@runCatching null
+                }
+
+                body.byteStream().use { raw ->
+                    val input = BufferedInputStream(raw)
+                    input.mark(512 * 1024)
+                    val boundsOptions = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    BitmapFactory.decodeStream(input, null, boundsOptions)
+                    input.reset()
+                    if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) return@runCatching null
+
+                    val decodeOptions = BitmapFactory.Options().apply {
+                        inSampleSize = calculateInSampleSize(boundsOptions, reqSize, reqSize)
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+                    BitmapFactory.decodeStream(input, null, decodeOptions)
+                }
+            }
+        }.getOrElse {
+            Log.w(TAG, "decodeSampledBitmapFromHttpUrl failed: url=$url msg=${it.message}", it)
+            null
+        }
+    }
+
+    private fun decodeSampledBitmapFromUri(uri: Uri, reqSize: Int): Bitmap? {
+        fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+            val (height, width) = options.outHeight to options.outWidth
+            var inSampleSize = 1
+            if (height > reqHeight || width > reqWidth) {
+                var halfHeight = height / 2
+                var halfWidth = width / 2
+                while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                    inSampleSize *= 2
+                }
+            }
+            return inSampleSize.coerceAtLeast(1)
+        }
+
+        return runCatching {
+            val resolver = context.contentResolver
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            resolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, boundsOptions)
+            } ?: return@runCatching null
+
+            if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+                Log.w(TAG, "decodeSampledBitmapFromUri failed: invalid bounds uri=$uri")
+                return@runCatching null
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = calculateInSampleSize(boundsOptions, reqSize, reqSize)
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            resolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, decodeOptions)
+            }
+        }.getOrElse {
+            Log.w(TAG, "decodeSampledBitmapFromUri failed: uri=$uri msg=${it.message}", it)
+            null
+        }
+    }
+
+    private fun scaleCenterCropSquare(source: Bitmap, size: Int): Bitmap {
+        val srcWidth = source.width.coerceAtLeast(1)
+        val srcHeight = source.height.coerceAtLeast(1)
+        val srcSize = minOf(srcWidth, srcHeight)
+
+        val srcLeft = (srcWidth - srcSize) / 2
+        val srcTop = (srcHeight - srcSize) / 2
+
+        val cropped = Bitmap.createBitmap(source, srcLeft, srcTop, srcSize, srcSize)
+        return if (cropped.width == size && cropped.height == size) {
+            cropped
+        } else {
+            Bitmap.createScaledBitmap(cropped, size, size, true).also {
+                if (cropped != source) cropped.recycle()
+            }
+        }
+    }
+
+    private fun buildLiveUpdateTexts(
+        conversationId: Uuid,
+        state: ChatLiveUpdateState,
+        error: Throwable?,
+    ): Pair<String?, String?> {
+        val conversation = getConversationFlow(conversationId).value
+        val lastUserText = conversation.currentMessages
+            .lastOrNull { it.role == MessageRole.USER }
+            ?.toContentText()
+            ?.takeIf { it.isNotBlank() }
+        val lastAssistantText = conversation.currentMessages
+            .lastOrNull { it.role == MessageRole.ASSISTANT }
+            ?.toContentText()
+            ?.takeIf { it.isNotBlank() }
+
+        fun String?.short(): String? = this?.let { ChatLiveUpdateTextFormatter.tail(it, maxChars = 80) }
+            ?.takeIf { it.isNotBlank() }
+        fun String?.long(): String? = this?.let { ChatLiveUpdateTextFormatter.tail(it, maxChars = 420) }
+            ?.takeIf { it.isNotBlank() }
+
+        return when (state) {
+            ChatLiveUpdateState.WAITING -> lastUserText.short() to lastUserText.long()
+            ChatLiveUpdateState.INFERENCE -> lastUserText.short() to lastUserText.long()
+            ChatLiveUpdateState.TOOL_CALL -> lastUserText.short() to lastUserText.long()
+            ChatLiveUpdateState.WAITING_FOR_ANSWER -> {
+                val pendingQuestion = conversation.currentMessages
+                    .asReversed()
+                    .asSequence()
+                    .flatMap { it.parts.asSequence() }
+                    .filterIsInstance<UIMessagePart.AskUser>()
+                    .firstOrNull { it.state == AskUserState.Pending }
+                    ?.let { part ->
+                        part.questions?.firstOrNull()?.question?.takeIf { it.isNotBlank() }
+                            ?: part.question.takeIf { it.isNotBlank() }
+                    }
+                (pendingQuestion ?: lastUserText).short() to (pendingQuestion ?: lastUserText).long()
+            }
+            ChatLiveUpdateState.OUTPUT -> lastAssistantText.short() to lastAssistantText.long()
+            ChatLiveUpdateState.DONE -> lastAssistantText.short() to lastAssistantText.long()
+            ChatLiveUpdateState.ERROR -> {
+                val errorSummary = error?.message?.trim()?.take(120)?.takeIf { it.isNotBlank() }
+                    ?: error?.javaClass?.simpleName
+                errorSummary to buildString {
+                    if (!errorSummary.isNullOrBlank()) {
+                        append(errorSummary)
+                    }
+                    if (!lastUserText.isNullOrBlank()) {
+                        if (isNotEmpty()) append("\n\n")
+                        append(ChatLiveUpdateTextFormatter.tail(lastUserText, maxChars = 420))
+                    }
+                }.take(600)
+            }
+        }
+    }
+
+    // 添加引用
+    fun addConversationReference(conversationId: Uuid) {
+        conversationReferences[conversationId] = conversationReferences.getOrDefault(conversationId, 0) + 1
+        Log.d(
+            TAG,
+            "Added reference for $conversationId (current references: ${conversationReferences[conversationId] ?: 0})"
+        )
+    }
+
+    // 移除引用
+    fun removeConversationReference(conversationId: Uuid) {
+        conversationReferences[conversationId]?.let { count ->
+            if (count > 1) {
+                conversationReferences[conversationId] = count - 1
+            } else {
+                conversationReferences.remove(conversationId)
+            }
+        }
+        Log.d(
+            TAG,
+            "Removed reference for $conversationId (current references: ${conversationReferences[conversationId] ?: 0})"
+        )
+        appScope.launch {
+            delay(500)
+            checkAllConversationsReferences()
+        }
+    }
+
+    // 检查是否有引用
+    private fun hasReference(conversationId: Uuid): Boolean {
+        return conversationReferences.containsKey(conversationId) || _generationJobs.value.containsKey(
+            conversationId
+        )
+    }
+
+    // 检查所有conversation的引用情况（生成结束后调用）
+    fun checkAllConversationsReferences() {
+        conversations.keys.forEach { conversationId ->
+            if (!hasReference(conversationId)) {
+                cleanupConversation(conversationId)
+            }
+        }
+    }
+
+    // 获取对话的StateFlow
+    fun getConversationFlow(conversationId: Uuid): StateFlow<Conversation> {
+        val settings = settingsStore.settingsFlow.value
+        val assistant = when (val target = settings.chatTarget) {
+            is ChatTarget.Assistant -> settings.getAssistantById(target.assistantId)
+            is ChatTarget.GroupChat -> null
+        } ?: settings.getCurrentAssistant()
+        return conversations.getOrPut(conversationId) {
+            MutableStateFlow(
+                Conversation.ofId(
+                    id = conversationId,
+                    assistantId = settings.chatTarget.id
+                ).copy(
+                    enabledModeIds = assistant.enabledModeIds
+                )
+            )
+        }
+    }
+
+    private fun isWorkspaceRootTreeUriAccessible(uriString: String): Boolean {
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return false
+        val rootDoc = runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull()
+        return rootDoc?.isDirectory == true
+    }
+
+    private suspend fun applyRememberedWorkspaceForNewConversation(conversationId: Uuid) {
+        val settingsSnapshot = settingsStore.settingsFlowRaw.first()
+        if (!settingsSnapshot.rememberLastWorkspaceForNewChats) return
+        val rememberedWorkspace = settingsSnapshot.rememberedWorkspaceForNewChats ?: return
+
+        val validatedRememberedWorkspace = when (val rootUri = rememberedWorkspace.workspaceRootTreeUri) {
+            null -> rememberedWorkspace
+            else -> {
+                val accessible = withContext(Dispatchers.IO) {
+                    isWorkspaceRootTreeUriAccessible(rootUri)
+                }
+                if (!accessible) return
+                rememberedWorkspace.copy(workspaceRootTreeUri = rootUri)
+            }
+        }
+
+        val effectiveRootAfterApply = validatedRememberedWorkspace.workspaceRootTreeUri
+            ?: settingsSnapshot.workspaceRootTreeUri?.trim()?.takeIf { it.isNotBlank() }
+        if (effectiveRootAfterApply == null && validatedRememberedWorkspace.workDirRelPath != null) return
+
+        settingsStore.update { current ->
+            if (!current.rememberLastWorkspaceForNewChats) return@update current
+            if (current.rememberedWorkspaceForNewChats != rememberedWorkspace) return@update current
+            current.applyRememberedWorkspaceToConversation(
+                conversationId = conversationId,
+                rememberedWorkspace = validatedRememberedWorkspace,
+            )
+        }
+    }
+
+    // 获取生成任务状态流
+    fun getGenerationJobStateFlow(conversationId: Uuid): Flow<Job?> {
+        return generationJobs.map { jobs -> jobs[conversationId] }
+    }
+
+    fun getConversationJobs(): Flow<Map<Uuid, Job?>> {
+        return generationJobs
+    }
+
+    private fun setGenerationJob(conversationId: Uuid, job: Job?) {
+        if (job == null) {
+            removeGenerationJob(conversationId)
+            return
+        }
+        _generationJobs.value = _generationJobs.value.toMutableMap().apply {
+            this[conversationId] = job
+        }.toMap() // 确保创建新的不可变Map实例
+    }
+
+    private fun getGenerationJob(conversationId: Uuid): Job? {
+        return _generationJobs.value[conversationId]
+    }
+
+    fun cancelGenerationByUser(conversationId: Uuid) {
+        cancelGenerationJob(conversationId, GenerationCancelReason.USER)
+    }
+
+    suspend fun loadOlderHistoryNodes(
+        conversationId: Uuid,
+        limit: Int = OLDER_HISTORY_LOAD_BATCH_SIZE,
+    ): Int = withContext(Dispatchers.IO) {
+        val safeLimit = limit.coerceAtLeast(1)
+        val lock = olderHistoryLoadMutexes.getOrPut(conversationId) { Mutex() }
+        lock.withLock {
+            val currentConversation = getConversationFlow(conversationId).value
+            if (!currentConversation.hasOlderHistoryNodes) {
+                return@withLock 0
+            }
+
+            val chunk = conversationRepo.loadOlderMessageNodeChunk(
+                conversationId = conversationId,
+                beforeIndexExclusive = currentConversation.loadedNodeStartIndex,
+                limit = safeLimit,
+            ) ?: return@withLock 0
+
+            val existingIds = currentConversation.messageNodes
+                .asSequence()
+                .map { node -> node.id }
+                .toHashSet()
+            val prependNodes = chunk.nodes.filterNot { node -> node.id in existingIds }
+
+            val mergedNodes = if (prependNodes.isEmpty()) {
+                currentConversation.messageNodes
+            } else {
+                prependNodes + currentConversation.messageNodes
+            }
+            val mergedTotalCount = maxOf(chunk.totalCount, mergedNodes.size)
+            val updatedConversation = currentConversation.copy(
+                messageNodes = mergedNodes,
+                loadedNodeStartIndex = chunk.startIndex,
+                totalMessageNodeCount = mergedTotalCount,
+            )
+
+            if (updatedConversation != currentConversation) {
+                updateConversation(conversationId, updatedConversation)
+            }
+
+            return@withLock prependNodes.size
+        }
+    }
+
+    private fun cancelGenerationJob(
+        conversationId: Uuid,
+        reason: GenerationCancelReason,
+    ): Boolean {
+        val job = getGenerationJob(conversationId) ?: return false
+        generationCancelReasons[conversationId] = reason
+        job.cancel()
+        return true
+    }
+
+    private fun consumeGenerationCancelReason(conversationId: Uuid): GenerationCancelReason? {
+        return generationCancelReasons.remove(conversationId)
+    }
+
+    private fun removeGenerationJob(conversationId: Uuid) {
+        _generationJobs.value = _generationJobs.value.toMutableMap().apply {
+            remove(conversationId)
+        }.toMap() // 确保创建新的不可变Map实例
+        generationCancelReasons.remove(conversationId)
+    }
+
+    // 初始化对话
+    suspend fun initializeConversation(conversationId: Uuid): Boolean {
+        // If there is an active generation job, the in-memory StateFlow has the latest
+        // streaming data. Loading from DB would overwrite it with stale pre-generation state.
+        val activeJob = getGenerationJob(conversationId)
+        if (activeJob != null && activeJob.isActive) {
+            val inMemoryConversation = conversations[conversationId]?.value
+            if (inMemoryConversation != null && inMemoryConversation.messageNodes.isNotEmpty()) {
+                val settingsSnapshot = settingsStore.settingsFlow.value
+                val isGroupChat = settingsSnapshot.groupChatTemplates.any { it.id == inMemoryConversation.assistantId }
+                if (isGroupChat) {
+                    settingsStore.updateChatTarget(ChatTarget.GroupChat(inMemoryConversation.assistantId))
+                } else {
+                    settingsStore.updateAssistant(inMemoryConversation.assistantId)
+                }
+                return true
+            }
+        }
+
+        val loadResult = conversationRepo.getConversationByIdCatching(conversationId)
+        val loadError = loadResult.exceptionOrNull()
+        if (loadError != null) {
+            Log.e(TAG, "initializeConversation: failed to load conversationId=$conversationId", loadError)
+
+            // Treat this chat as "temporary" so we don't keep hitting DB errors while user recovers.
+            temporaryConversations.add(conversationId)
+
+            appScope.launch {
+                _errorFlow.emit(
+                    IllegalStateException(
+                        context.getString(R.string.conversation_load_failed),
+                        loadError
+                    )
+                )
+            }
+            return false
+        }
+
+        val conversation = loadResult.getOrNull()
+        if (conversation != null) {
+            updateConversation(conversationId, conversation)
+            val settingsSnapshot = settingsStore.settingsFlow.value
+            val isGroupChat = settingsSnapshot.groupChatTemplates.any { it.id == conversation.assistantId }
+            if (isGroupChat) {
+                settingsStore.updateChatTarget(ChatTarget.GroupChat(conversation.assistantId))
+            } else {
+                settingsStore.updateAssistant(conversation.assistantId)
+            }
+            return true
+        } else {
+            val inMemoryConversation = getConversationFlow(conversationId).value
+            if (inMemoryConversation.messageNodes.isNotEmpty()) {
+                updateConversation(conversationId, inMemoryConversation)
+                return true
+            }
+
+            // 新建对话, 并添加预设消息
+            applyRememberedWorkspaceForNewConversation(conversationId)
+            val currentSettings = settingsStore.settingsFlowRaw.first()
+            val target = currentSettings.chatTarget
+            val baseConversation = Conversation.ofId(
+                id = conversationId,
+                assistantId = target.id,
+            )
+
+            val initialConversation = when (target) {
+                is ChatTarget.Assistant -> {
+                    val assistant = currentSettings.getAssistantById(target.assistantId)
+                        ?: currentSettings.getCurrentAssistant()
+                    baseConversation.updateCurrentMessages(assistant.presetMessages).copy(
+                        enabledModeIds = assistant.enabledModeIds,
+                    )
+                }
+
+                is ChatTarget.GroupChat -> baseConversation
+            }
+
+            updateConversation(conversationId, initialConversation)
+            return true
+        }
+    }
+
+    suspend fun ensureConversationLoaded(conversationId: Uuid): Conversation? {
+        val currentState = conversations[conversationId]?.value
+        if (currentState != null) return currentState
+        val conversation = withContext(Dispatchers.IO) {
+            conversationRepo.getConversationById(conversationId)
+        } ?: return null
+        updateConversation(conversationId, conversation)
+        return conversation
+    }
+
+    suspend fun createConversation(assistantId: Uuid): Conversation {
+        val settings = settingsStore.settingsFlow.value
+        val assistant = settings.getAssistantById(assistantId) ?: settings.getCurrentAssistant()
+        val conversation = Conversation.ofId(
+            id = Uuid.random(),
+            assistantId = assistant.id,
+        ).updateCurrentMessages(assistant.presetMessages).copy(
+            enabledModeIds = assistant.enabledModeIds,
+        )
+        saveConversation(conversation.id, conversation)
+        return conversation
+    }
+
+    fun stopGeneration(conversationId: Uuid) {
+        cancelGenerationByUser(conversationId)
+    }
+
+    fun isGenerating(conversationId: Uuid): Boolean {
+        return _generationJobs.value[conversationId]?.isActive == true
+    }
+
+    suspend fun editMessage(
+        conversationId: Uuid,
+        messageId: Uuid,
+        parts: List<UIMessagePart>,
+    ) {
+        val currentConversation = ensureConversationLoaded(conversationId) ?: return
+        val updatedConversation = currentConversation.copy(
+            messageNodes = currentConversation.messageNodes.map { node ->
+                if (node.messages.none { it.id == messageId }) return@map node
+                val originalMessage = node.messages.first { it.id == messageId }
+                node.copy(
+                    messages = node.messages + UIMessage(
+                        role = originalMessage.role,
+                        parts = parts,
+                    ),
+                    selectIndex = node.messages.size,
+                )
+            },
+            updateAt = Instant.now(),
+        )
+        saveConversation(conversationId, updatedConversation)
+    }
+
+    suspend fun forkConversationAtMessage(
+        conversationId: Uuid,
+        messageId: Uuid,
+    ): Conversation {
+        val currentConversation = ensureConversationLoaded(conversationId)
+            ?: return Conversation.ofId(Uuid.random())
+
+        val forkEndIndex = currentConversation.messageNodes
+            .indexOfFirst { node -> node.messages.any { it.id == messageId } }
+            .takeIf { it >= 0 }
+            ?: currentConversation.messageNodes.lastIndex
+
+        val nodesToCopy = if (forkEndIndex >= 0) {
+            currentConversation.messageNodes.subList(0, forkEndIndex + 1)
+        } else {
+            emptyList()
+        }
+
+        val forkConversation = Conversation(
+            id = Uuid.random(),
+            assistantId = currentConversation.assistantId,
+            messageNodes = nodesToCopy,
+        )
+        saveConversation(forkConversation.id, forkConversation)
+        return forkConversation
+    }
+
+    suspend fun deleteMessage(
+        conversationId: Uuid,
+        messageId: Uuid,
+    ) {
+        val currentConversation = ensureConversationLoaded(conversationId) ?: return
+        val currentMessages = currentConversation.messageNodes.flatMap { it.messages }
+        val index = currentMessages.indexOfFirst { it.id == messageId }
+        if (index == -1) return
+
+        val allDeleteIds = mutableSetOf(messageId)
+        for (i in index - 1 downTo 0) {
+            val msg = currentMessages[i]
+            if (msg.hasPart<UIMessagePart.ToolCall>() || msg.hasPart<UIMessagePart.ToolResult>()) {
+                allDeleteIds.add(msg.id)
+            } else break
+        }
+        for (i in index + 1 until currentMessages.size) {
+            val msg = currentMessages[i]
+            if (msg.hasPart<UIMessagePart.ToolCall>() || msg.hasPart<UIMessagePart.ToolResult>()) {
+                allDeleteIds.add(msg.id)
+            } else break
+        }
+
+        val updatedConversation = currentConversation.copy(
+            messageNodes = currentConversation.messageNodes.mapNotNull { node ->
+                val newMessages = node.messages.filter { it.id !in allDeleteIds }
+                if (newMessages.isEmpty()) null
+                else {
+                    val newSelectIndex = if (node.selectIndex >= newMessages.size) newMessages.lastIndex else node.selectIndex
+                    node.copy(messages = newMessages, selectIndex = newSelectIndex)
+                }
+            },
+            updateAt = Instant.now(),
+        )
+        saveConversation(conversationId, updatedConversation)
+    }
+
+    suspend fun selectMessageNode(
+        conversationId: Uuid,
+        nodeId: Uuid,
+        selectIndex: Int,
+    ) {
+        val currentConversation = ensureConversationLoaded(conversationId) ?: return
+        val updatedConversation = currentConversation.copy(
+            messageNodes = currentConversation.messageNodes.map { node ->
+                if (node.id != nodeId) node
+                else node.copy(selectIndex = selectIndex.coerceIn(0, node.messages.lastIndex))
+            },
+            updateAt = Instant.now(),
+        )
+        saveConversation(conversationId, updatedConversation)
+    }
+
+    /**
+     * Switch the assistant for the current conversation.
+     *
+     * Intended for "empty" chats (no user messages yet). Updates the in-memory conversation
+     * immediately, and only persists the assistant change if the conversation already exists in DB
+     * to avoid polluting history with new empty chats.
+     */
+    fun setConversationAssistant(conversationId: Uuid, assistantId: Uuid) {
+        val currentConversation = getConversationFlow(conversationId).value
+        if (currentConversation.assistantId == assistantId) return
+
+        val hasUserMessages = currentConversation.messageNodes.any { node ->
+            node.messages.any { it.role == MessageRole.USER }
+        }
+        if (hasUserMessages) {
+            Log.w(TAG, "setConversationAssistant ignored: conversation has user messages ($conversationId)")
+            return
+        }
+
+        val settingsSnapshot = settingsStore.settingsFlow.value
+        val assistant = settingsSnapshot.getAssistantById(assistantId)
+        if (assistant == null) {
+            Log.w(TAG, "setConversationAssistant ignored: assistant not found ($assistantId)")
+            return
+        }
+
+        val updatedConversation = currentConversation
+            .copy(
+                assistantId = assistantId,
+                messageNodes = emptyList(),
+                truncateIndex = -1,
+                chatSuggestions = emptyList(),
+            )
+            .updateCurrentMessages(assistant.presetMessages)
+
+        updateConversation(conversationId, updatedConversation)
+
+        appScope.launch(Dispatchers.IO) {
+            try {
+                settingsStore.updateAssistant(assistantId)
+            } catch (e: Exception) {
+                Log.w(TAG, "setConversationAssistant: updateAssistant failed (${e.message})", e)
+            }
+
+            if (temporaryConversations.contains(conversationId)) return@launch
+
+            val existsInDb = try {
+                conversationRepo.getConversationById(conversationId) != null
+            } catch (e: Exception) {
+                Log.w(TAG, "setConversationAssistant: getConversationById failed (${e.message})", e)
+                false
+            }
+
+            if (!existsInDb) return@launch
+
+            try {
+                conversationRepo.updateConversation(updatedConversation)
+            } catch (e: Exception) {
+                Log.w(TAG, "setConversationAssistant: updateConversation failed (${e.message})", e)
+            }
+        }
+    }
+
+    // 发送消息
+    fun sendMessage(
+        conversationId: Uuid,
+        content: List<UIMessagePart>,
+        answer: Boolean=true,
+        isTemporaryChat: Boolean = false,
+        groupChatSpeakerSeatIdsOverride: List<Uuid>? = null,
+    ) {
+        // 标记为临时对话
+        if (isTemporaryChat) {
+            temporaryConversations.add(conversationId)
+        }
+        
+        // 取消现有的生成任务
+        cancelGenerationJob(conversationId, GenerationCancelReason.NON_USER)
+
+        val job = appScope.launch {
+            try {
+                val currentConversation = getConversationFlow(conversationId).value
+
+                // 添加消息到列表
+                val userMessageNode = UIMessage(
+                    role = MessageRole.USER,
+                    parts = content,
+                ).toMessageNode()
+                val newConversationRaw = currentConversation.copy(
+                    messageNodes = currentConversation.messageNodes + userMessageNode,
+                )
+                val fallbackTitle = buildFallbackTitleFromConversation(newConversationRaw)
+                val newConversation = newConversationRaw.copy(
+                    title = currentConversation.title.ifBlank { fallbackTitle },
+                )
+                saveConversation(conversationId, newConversation)
+
+                // 记录每日活跃（用于连续聊天天数统计，独立于对话数据，避免删除聊天导致 streak 丢失）
+                try {
+                    conversationRepo.recordDailyActivity()
+                } catch (e: Exception) {
+                    Log.w(TAG, "sendMessage: recordDailyActivity failed (${e.message})", e)
+                }
+
+                // Pre-send quota check
+                try {
+                    val settings = settingsStore.settingsFlow.value
+                    val currentModel = settings.getCurrentChatModel()
+                    if (currentModel != null) {
+                        modelQuotaRepo.checkAndAutoResetForProviders(currentModel, settings.providers)
+                        val quotaResult = modelQuotaRepo.getQuotaUsageForProviders(currentModel, settings.providers)
+                        if (quotaResult != null && quotaResult.isOverLimit) {
+                            _quotaWarningFlow.emit(quotaResult)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "sendMessage: quota check failed (${e.message})", e)
+                }
+
+                // 开始补全
+                if(answer){
+                    handleMessageComplete(
+                        conversationId = conversationId,
+                        groupChatSpeakerSeatIdsOverride = groupChatSpeakerSeatIdsOverride,
+                    )
+                }
+
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                if (e is CancellationException) return@launch
+                e.printStackTrace()
+                _errorFlow.emit(e)
+            }
+        }
+        setGenerationJob(conversationId, job)
+        job.invokeOnCompletion {
+            setGenerationJob(conversationId, null)
+            // 取消生成任务后，检查是否有其他任务在进行
+            appScope.launch {
+                delay(500)
+                checkAllConversationsReferences()
+            }
+        }
+    }
+
+    // 重新生成消息
+    fun regenerateAtMessage(
+        conversationId: Uuid,
+        message: UIMessage,
+        regenerateAssistantMsg: Boolean = true
+    ) {
+        cancelGenerationJob(conversationId, GenerationCancelReason.NON_USER)
+
+        val job = appScope.launch {
+            try {
+                val conversation = getConversationFlow(conversationId).value
+
+                if (message.role == MessageRole.USER) {
+                    // 如果是用户消息，则截止到当前消息
+                    val node = conversation.getMessageNodeByMessage(message)
+                    val indexAt = conversation.messageNodes.indexOf(node)
+                    val newConversation = conversation.copy(
+                        messageNodes = conversation.messageNodes.subList(0, indexAt + 1)
+                    )
+                    saveConversation(conversationId, newConversation)
+                    handleMessageComplete(conversationId)
+                } else {
+                    if (regenerateAssistantMsg) {
+                        val node = conversation.getMessageNodeByMessage(message)
+                        val nodeIndex = conversation.messageNodes.indexOf(node)
+                        handleMessageComplete(conversationId, messageRange = 0..<nodeIndex)
+                    } else {
+                        saveConversation(conversationId, conversation)
+                    }
+                }
+
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                if (e is CancellationException) return@launch
+                _errorFlow.emit(e)
+            }
+        }
+
+        setGenerationJob(conversationId, job)
+        job.invokeOnCompletion {
+            setGenerationJob(conversationId, null)
+            // 取消生成任务后，检查是否有其他任务在进行
+            appScope.launch {
+                delay(500)
+                checkAllConversationsReferences()
+            }
+        }
+    }
+
+    fun continueAtMessage(
+        conversationId: Uuid,
+        message: UIMessage,
+    ) {
+        cancelGenerationJob(conversationId, GenerationCancelReason.NON_USER)
+
+        val job = appScope.launch {
+            try {
+                val conversation = getConversationFlow(conversationId).value
+                val messageNode = conversation.getMessageNodeByMessageId(message.id)
+                val nodeIndex = messageNode?.let { node -> conversation.messageNodes.indexOf(node) } ?: -1
+                val isLastAssistantMessage =
+                    message.role == MessageRole.ASSISTANT &&
+                        nodeIndex == conversation.messageNodes.lastIndex
+
+                if (!isLastAssistantMessage) {
+                    _errorFlow.emit(
+                        IllegalStateException(context.getString(R.string.chat_continue_only_last_assistant_message))
+                    )
+                    return@launch
+                }
+
+                val settings = settingsStore.settingsFlow.first()
+                val isGroupChat = settings.groupChatTemplates.any { it.id == conversation.assistantId }
+                if (isGroupChat) {
+                    _errorFlow.emit(
+                        IllegalStateException(context.getString(R.string.chat_continue_group_chat_not_supported))
+                    )
+                    return@launch
+                }
+
+                val originalText = message.toContentText()
+                val continuePrompt = buildHiddenContinuePrompt(
+                    previousAssistantText = originalText,
+                    tailChars = CONTINUE_TAIL_CHARS_DEFAULT,
+                )
+
+                handleMessageComplete(
+                    conversationId = conversationId,
+                    messageRange = 0..nodeIndex,
+                    continueRequest = HiddenContinueRequestConfig(prompt = continuePrompt),
+                    continuationDedupeConfig = ContinuationDedupeConfig(
+                        targetMessageId = message.id,
+                        originalText = originalText,
+                    ),
+                )
+
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                if (e is CancellationException) return@launch
+                _errorFlow.emit(e)
+            }
+        }
+
+        setGenerationJob(conversationId, job)
+        job.invokeOnCompletion {
+            setGenerationJob(conversationId, null)
+            appScope.launch {
+                delay(500)
+                checkAllConversationsReferences()
+            }
+        }
+    }
+
+    // 处理消息补全
+    private suspend fun handleMessageComplete(
+        conversationId: Uuid,
+        messageRange: ClosedRange<Int>? = null,
+        groupChatSpeakerSeatIdsOverride: List<Uuid>? = null,
+        continueRequest: HiddenContinueRequestConfig? = null,
+        continuationDedupeConfig: ContinuationDedupeConfig? = null,
+        autoContinueAttemptsRemaining: Int = 1,
+    ) {
+        val settings = settingsStore.settingsFlow.first()
+        val useLiveUpdate = shouldUseLiveUpdate(settings)
+        val useGenerationKeepAlive = shouldUseKeepAliveDuringGeneration(settings)
+        var latestFinishReasons: Set<String> = emptySet()
+        var generationCancelReason: GenerationCancelReason = GenerationCancelReason.NON_USER
+
+        // Track generation start time for tokens/sec calculation
+        // Set on first token arrival to exclude TTFT (time to first token) from the calculation
+        var firstTokenTime: Long? = null
+
+        var shouldConsumeWelcomePhraseAppContext = false
+        var keepAliveStarted = false
+        var keepAliveFinalized = false
+
+        fun finalizeGenerationKeepAlive(cause: Throwable?) {
+            if (!useGenerationKeepAlive) return
+            if (!keepAliveStarted) return
+            if (keepAliveFinalized) return
+            keepAliveFinalized = true
+
+            val remaining = keepAliveActiveGenerationCount.updateAndGet { current ->
+                (current - 1).coerceAtLeast(0)
+            }
+            if (remaining > 0) {
+                KeepAliveService.startOrUpdateGeneration(context, remaining)
+                return
+            }
+
+            when {
+                cause == null -> KeepAliveService.finishGenerationOk(context)
+                cause is CancellationException -> KeepAliveService.finishGenerationCancelled(context)
+                else -> KeepAliveService.finishGenerationError(context)
+            }
+        }
+
+        runCatching {
+            val conversation = getConversationFlow(conversationId).value
+
+            // reset suggestions
+            updateConversation(conversationId, conversation.copy(chatSuggestions = emptyList()))
+
+            // check invalid messages
+            checkInvalidMessages(conversationId)
+
+            val baseMessages = conversation.currentMessages.let {
+                if (messageRange != null) {
+                    it.subList(messageRange.start, messageRange.endInclusive + 1)
+                } else {
+                    it
+                }
+            }
+            val quotaBaselineMessages = conversation.currentMessages
+
+            val persistentConversationId =
+                conversationId.takeIf { !temporaryConversations.contains(conversationId) }
+            persistentConversationId?.let { id ->
+                toolResultArchiveRepository.backfillFromMessages(
+                    conversationId = id.toString(),
+                    assistantId = conversation.assistantId.toString(),
+                    messages = baseMessages,
+                    enableRagIndexing = false,
+                )
+            }
+            val welcomePhraseForAppContext = pendingUiWelcomePhraseForAppContext[conversationId]
+            val appContextTransformer = if (!welcomePhraseForAppContext.isNullOrBlank() && baseMessages.any { it.role == MessageRole.USER }) {
+                shouldConsumeWelcomePhraseAppContext = true
+                object : me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer {
+                    override suspend fun transform(
+                        ctx: me.rerere.rikkahub.data.ai.transformers.TransformerContext,
+                        messages: List<UIMessage>,
+                    ): List<UIMessage> {
+                        return injectWelcomePhraseIntoFirstUserMessage(messages, welcomePhraseForAppContext).messages
+                    }
+                }
+            } else {
+                null
+            }
+            val continueRequestTransformer = continueRequest
+                ?.prompt
+                ?.takeIf { prompt -> prompt.isNotBlank() }
+                ?.let { prompt -> HiddenContinueRequestTransformer(prompt) }
+
+            if (useLiveUpdate) {
+                startLiveUpdateSession(conversationId)
+                warmUpLiveUpdateIcon(conversationId, settings)
+                notifyLiveUpdate(
+                    conversationId = conversationId,
+                    state = ChatLiveUpdateState.WAITING,
+                    settings = settings,
+                    force = true,
+                    error = null,
+                )
+            }
+
+            if (useGenerationKeepAlive) {
+                val activeCount = keepAliveActiveGenerationCount.incrementAndGet()
+                keepAliveStarted = true
+                KeepAliveService.startOrUpdateGeneration(context, activeCount)
+            }
+
+            val groupTemplate = settings.groupChatTemplates.find { it.id == conversation.assistantId }
+            if (groupTemplate != null) {
+                if (firstTokenTime == null) {
+                    firstTokenTime = System.currentTimeMillis()
+                }
+                handleGroupChatMessageComplete(
+                    conversationId = conversationId,
+                    settings = settings,
+                    conversation = conversation,
+                    template = groupTemplate,
+                    forcedSpeakerSeatIds = groupChatSpeakerSeatIdsOverride,
+                    baseMessages = baseMessages,
+                    appContextTransformer = appContextTransformer,
+                    useLiveUpdate = useLiveUpdate,
+                )
+                if (useLiveUpdate) {
+                    liveUpdateStates.remove(conversationId)
+                    liveUpdateNotifier.cancel(conversationId)
+                }
+                if (!isForeground.value && settings.displaySetting.enableNotificationOnMessageGeneration) {
+                    sendGenerationDoneNotification(conversationId)
+                }
+                return@runCatching
+            }
+
+            val model = settings.getCurrentChatModel() ?: return@runCatching
+
+            val assistant = settings.getCurrentAssistant()
+            val modelProvider = model.findProvider(settings.providers)
+            val modelSupportsBuiltIn = model.supportsBuiltInSearch(modelProvider)
+            val useBuiltInSearch = modelSupportsBuiltIn && !assistant.enableSearchAgent && (
+                assistant.searchMode is AssistantSearchMode.BuiltIn ||
+                    (assistant.preferBuiltInSearch && assistant.searchMode !is AssistantSearchMode.Off)
+                )
+            val runtimeModel = if (useBuiltInSearch) {
+                model.ensureBuiltInSearchTool(modelProvider)
+            } else {
+                model.withoutBuiltInSearchTools()
+            }
+            val hasEnabledLorebooksForAssistant =
+                assistant.localTools.contains(LocalToolOption.LorebooksEditor) &&
+                    settings.lorebooks.any { lorebook ->
+                        lorebook.enabled && assistant.enabledLorebookIds.contains(lorebook.id)
+                    }
+
+            // start generating
+            generationHandler.generateText(
+                settings = settings,
+                model = runtimeModel,
+                messages = baseMessages,
+                conversationId = persistentConversationId,
+                assistant = assistant,
+                memories = if (assistant.enableMemory && persistentConversationId != null) {
+                    val assistantId = assistant.id.toString()
+                    val memoryCacheKey = buildMemoryCacheKey(persistentConversationId, assistantId)
+                    if (assistant.useRagMemoryRetrieval) {
+                        // RAG mode: retrieve relevant memories based on context
+                        val lastUserMessage = conversation.currentMessages
+                            .lastOrNull { it.role == MessageRole.USER }
+                            ?.toText()
+                            .orEmpty()
+                        val limit = assistant.ragLimit.coerceIn(0, 50)
+                        val pinnedMemories = if (assistant.ragIncludeCore) {
+                            withContext(Dispatchers.IO) {
+                                memoryRepository.getPinnedMemoriesOfAssistant(assistantId)
+                            }
+                        } else {
+                            emptyList()
+                        }
+                        val canUseLastTurnMemory = settings.displaySetting.useLastTurnMemoryOnSkip
+                        val lastTurnMemories = lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey]
+                        
+                        if (settings.enableRagLogging) {
+                            Log.d("RAG", "Query: $lastUserMessage")
+                        }
+
+                        var retrievalSkipped = false
+                        val resolved = when {
+                            limit <= 0 -> pinnedMemories
+                            lastUserMessage.isNotBlank() -> {
+                                val queryEmbedding = runCatching {
+                                    embeddingService.embed(
+                                        text = lastUserMessage,
+                                        assistantId = assistantId,
+                                        source = AIRequestSource.MEMORY_RETRIEVAL,
+                                    )
+                                }.getOrElse { t ->
+                                    retrievalSkipped = true
+                                    Log.w("RAG", "Memory query embedding failed: ${t.message}", t)
+                                    null
+                                }
+
+                                val results = if (queryEmbedding != null) {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            memoryRepository.retrieveRelevantMemoriesByEmbedding(
+                                                assistantId = assistantId,
+                                                queryEmbedding = queryEmbedding,
+                                                limit = limit,
+                                                similarityThreshold = assistant.ragSimilarityThreshold,
+                                                includeCore = assistant.ragIncludeCore,
+                                                includeEpisodes = assistant.ragIncludeEpisodes,
+                                            )
+                                        }
+                                    }.getOrElse { t ->
+                                        retrievalSkipped = true
+                                        Log.w("RAG", "Memory retrieval failed: ${t.message}", t)
+                                        emptyList()
+                                    }
+                                } else {
+                                    emptyList()
+                                }
+
+                                if (!retrievalSkipped) {
+                                    if (settings.enableRagLogging) {
+                                        Log.d("RAG", "Retrieved ${results.size} memories")
+                                        results.forEach { Log.d("RAG", " - [${it.type}] ${it.content.take(50)}...") }
+                                    }
+                                    (pinnedMemories + results).distinctBy { it.id }
+                                } else {
+                                    val fallback = if (canUseLastTurnMemory) lastTurnMemories else null
+                                    val filteredFallback = fallback?.let {
+                                        filterMemoriesForRagOptions(
+                                            memories = it,
+                                            includeCore = assistant.ragIncludeCore,
+                                            includeEpisodes = assistant.ragIncludeEpisodes,
+                                        )
+                                    }.orEmpty()
+                                    if (settings.enableRagLogging) {
+                                        Log.w("RAG", "Memory retrieval skipped; using last turn memories (${filteredFallback.size})")
+                                    }
+                                    (pinnedMemories + filteredFallback).distinctBy { it.id }
+                                }
+                            }
+                            else -> {
+                                if (settings.enableRagLogging) Log.d("RAG", "Empty query, using recent memories")
+                                withContext(Dispatchers.IO) {
+                                    val recent = memoryRepository.getRecentCombinedMemories(
+                                        assistantId = assistantId,
+                                        limit = limit,
+                                        includeCore = assistant.ragIncludeCore,
+                                        includeEpisodes = assistant.ragIncludeEpisodes,
+                                    )
+                                    (pinnedMemories + recent).distinctBy { it.id }
+                                }
+                            }
+                        }
+                        if (!retrievalSkipped) {
+                            lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = resolved
+                        }
+                        resolved
+                    } else {
+                        // Simple mode: inject all memories
+                        val resolved = withContext(Dispatchers.IO) { memoryRepository.getMemoriesOfAssistant(assistantId) }
+                        lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = resolved
+                        resolved
+                    }
+                } else {
+                    null
+                },
+                inputTransformers = buildList {
+                    appContextTransformer?.let(::add)
+                    continueRequestTransformer?.let(::add)
+                    addAll(inputTransformers)
+                    add(templateTransformer)
+                },
+                outputTransformers = outputTransformers,
+                sessionMemories = if (assistant.enableSessionMemory) conversation.sessionMemories else emptyList(),
+                enableSessionMemoryTools = true,
+                onSessionMemoriesChanged = { updatedSessionMemories ->
+                    val current = getConversationFlow(conversationId).value
+                    updateConversation(
+                        conversationId,
+                        current.copy(
+                            sessionMemories = updatedSessionMemories,
+                            updateAt = Instant.now(),
+                        )
+                    )
+                },
+                tools = buildList {
+                    // Check if we should use built-in search instead of external tools
+                    // Built-in search is used when:
+                    // 1. preferBuiltInSearch is enabled on assistant
+                    // 2. Model supports built-in search
+
+                    // Use assistant's searchMode for external tools (only if NOT using built-in)
+                    when (val searchMode = assistant.searchMode) {
+                        is AssistantSearchMode.Provider,
+                        is AssistantSearchMode.MultiProvider -> {
+                            if (!useBuiltInSearch) {
+                                addAll(
+                                    createEffectiveSearchTools(
+                                        settings = settings,
+                                        searchMode = searchMode,
+                                        enableSearchAgent = assistant.enableSearchAgent,
+                                    )
+                                )
+                            }
+                        }
+                        is AssistantSearchMode.BuiltIn -> Unit
+                        is AssistantSearchMode.Off -> Unit
+                    }
+                    addAll(localTools.getTools(
+                        options = assistant.localTools,
+                        assistantId = assistant.id,
+                        conversationId = conversation.id
+                    ))
+                    if (assistant.localTools.contains(LocalToolOption.MemorySearch)) {
+                        addAll(
+                            me.rerere.rikkahub.data.ai.tools.MemoryTools.create(
+                                assistantId = assistant.id,
+                                memoryRepository = memoryRepository,
+                            )
+                        )
+                    }
+                    if (assistant.localTools.contains(LocalToolOption.ChatSearch)) {
+                        addAll(
+                            me.rerere.rikkahub.data.ai.tools.ChatSearchTools.create(
+                                assistantId = assistant.id,
+                                conversationId = conversation.id,
+                                conversationRepo = conversationRepo,
+                            )
+                        )
+                    }
+                    if (hasEnabledLorebooksForAssistant) {
+                        addAll(
+                            LorebookTools.create(
+                                assistant = assistant,
+                                conversationId = conversation.id,
+                                settingsSnapshot = settings,
+                                settingsStore = settingsStore,
+                                embeddingService = embeddingService,
+                                revisionRepo = lorebookEntryRevisionRepository,
+                            )
+                        )
+                    }
+                    val hasWorkspaceFiles = assistant.localTools.contains(LocalToolOption.WorkspaceFiles)
+                    if (hasWorkspaceFiles) {
+                        addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                    }
+                    if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
+                        add(
+                            createWorkspacePythonTool(
+                                conversationId = conversation.id,
+                                settingsSnapshot = settings,
+                                includeCommonRules = !hasWorkspaceFiles,
+                            )
+                        )
+                    }
+
+                    val enabledSkills = settings.skills.filter { skill -> skill.id in assistant.enabledSkillIds }
+                    if (enabledSkills.isNotEmpty()) {
+                        val scriptableSkills = if (settings.enableSkillScriptExecution) {
+                            enabledSkills.filter { skill -> skill.id in settings.enabledSkillScriptIds }
+                        } else {
+                            emptyList()
+                        }
+                        add(localTools.createSkillFileTool(enabledSkills, scriptableSkills))
+                        if (scriptableSkills.isNotEmpty()) {
+                            add(createSkillScriptTool(conversationId = conversation.id, allowedSkills = scriptableSkills))
+                        }
+                    }
+                    mcpManager.getAllAvailableTools().forEach { tool ->
+                        add(
+                            Tool(
+                                name = tool.name,
+                                description = tool.description ?: "",
+                                parameters = { tool.inputSchema },
+                                requiresUserApproval = tool.requireApproval,
+                                execute = {
+                                    mcpManager.callTool(tool.name, it.jsonObject)
+                                },
+                            )
+                        )
+                    }
+                    if (assistant.localTools.contains(LocalToolOption.AskUser)) {
+                        add(createAskUserTool(conversationId = conversation.id))
+                    }
+                },
+                truncateIndex = conversation.truncateIndex,
+                enabledModeIds = conversation.enabledModeIds,
+                explicitSkillContextIds = conversation.explicitSkillContextIds,
+                source = AIRequestSource.CHAT,
+                toolApprovalHandler = ToolApprovalHandler { request -> awaitToolApproval(request) },
+                askUserHandler = AskUserHandler { request -> awaitAskUserResponse(request.conversationId, request.toolCallId) },
+            ).onCompletion { cause ->
+                finalizeGenerationKeepAlive(cause)
+                if (cause is CancellationException) {
+                    generationCancelReason = consumeGenerationCancelReason(conversationId) ?: GenerationCancelReason.NON_USER
+                } else {
+                    consumeGenerationCancelReason(conversationId)
+                }
+                // Calculate generation duration from first token (excludes TTFT)
+                val generationDurationMs = firstTokenTime?.let { System.currentTimeMillis() - it }
+
+                // 可能被取消了，或者意外结束，兜底更新
+                val currentConversation = getConversationFlow(conversationId).value
+                val updatedConversation = currentConversation.copy(
+                    messageNodes = currentConversation.messageNodes.mapIndexed { index, node ->
+                        val isLastNode = index == currentConversation.messageNodes.lastIndex
+                        node.copy(messages = node.messages.map { msg ->
+                            val finishedMsg = msg.finishReasoning()
+                            // Add generation duration to the last assistant message
+                            if (isLastNode && finishedMsg.role == MessageRole.ASSISTANT && finishedMsg.generationDurationMs == null) {
+                                // Debug usage
+                                if (finishedMsg.usage == null) {
+                                    Log.w(TAG, "Assistant message usage is null in onCompletion")
+                                }
+                                finishedMsg.copy(generationDurationMs = generationDurationMs)
+                            } else {
+                                finishedMsg
+                            }
+                        })
+                    },
+                    updateAt = Instant.now()
+                )
+                updateConversation(conversationId, updatedConversation)
+
+                // Record quota usage after generation
+                if (cause == null) {
+                    try {
+                        val tokenUsage = calculateQuotaTokenUsageDelta(
+                            baselineMessages = quotaBaselineMessages,
+                            finalMessages = updatedConversation.currentMessages,
+                        )
+                        val chatModelId = updatedConversation.currentMessages
+                            .lastOrNull { it.role == MessageRole.ASSISTANT && it.modelId != null }
+                            ?.modelId
+                            ?: settings.getCurrentChatModel()?.id
+                        val currentModel = settings.getCurrentChatModel()
+                        if (!tokenUsage.isEmpty && chatModelId != null && currentModel != null) {
+                            modelQuotaRepo.recordUsage(
+                                modelId = chatModelId,
+                                inputTokens = tokenUsage.inputTokens,
+                                outputTokens = tokenUsage.outputTokens,
+                                cachedTokens = tokenUsage.cachedTokens,
+                            )
+                            val updatedQuota = modelQuotaRepo.getQuotaUsageForProviders(
+                                currentModel,
+                                settings.providers
+                            )
+                            if (updatedQuota != null && updatedQuota.isAtReminder) {
+                                _quotaWarningFlow.emit(updatedQuota)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "quota recording failed (${e.message})", e)
+                    }
+                }
+
+                val generationFinishedNormally = cause == null
+                if (generationFinishedNormally) {
+                    liveUpdateStates.remove(conversationId)
+                }
+            }.collect { chunk ->
+                // Set first token time on first chunk arrival (excludes TTFT from tok/s)
+                if (firstTokenTime == null) {
+                    firstTokenTime = System.currentTimeMillis()
+                }
+                
+                when (chunk) {
+                    is GenerationChunk.Messages -> {
+                        if (chunk.finishReasons.isNotEmpty()) {
+                            latestFinishReasons = chunk.finishReasons
+                        }
+                        val updatedConversation = getConversationFlow(conversationId).value
+                            .updateCurrentMessages(chunk.messages)
+                        updateConversation(conversationId, updatedConversation)
+
+                        if (useLiveUpdate) {
+                            val resolvedState = ChatLiveUpdateStateResolver.resolve(updatedConversation.currentMessages)
+                            val previousState = liveUpdateStates.put(conversationId, resolvedState)
+                            notifyLiveUpdate(
+                                conversationId = conversationId,
+                                state = resolvedState,
+                                settings = settings,
+                                force = previousState != resolvedState,
+                                error = null,
+                            )
+                        }
+                    }
+                }
+            }
+        }.onFailure {
+            finalizeGenerationKeepAlive(it)
+            val resolvedCancelReason = if (it is CancellationException) {
+                if (generationCancelReason != GenerationCancelReason.NON_USER) {
+                    generationCancelReason
+                } else {
+                    consumeGenerationCancelReason(conversationId) ?: GenerationCancelReason.NON_USER
+                }
+            } else {
+                generationCancelReason
+            }
+            val isUserCancelled = it is CancellationException && resolvedCancelReason == GenerationCancelReason.USER
+            if (useLiveUpdate) {
+                liveUpdateStates.remove(conversationId)
+                if (it is CancellationException) {
+                    liveUpdateNotifier.cancel(conversationId)
+                } else {
+                    notifyLiveUpdate(
+                        conversationId = conversationId,
+                        state = ChatLiveUpdateState.ERROR,
+                        settings = settings,
+                        force = true,
+                        error = it,
+                    )
+                }
+                clearLiveUpdateSession(conversationId)
+            }
+            it.printStackTrace()
+            if (!isUserCancelled) {
+                _errorFlow.emit(it)
+            }
+            Logging.log(TAG, "handleMessageComplete: $it")
+            Logging.log(TAG, it.stackTraceToString())
+        }.onSuccess {
+            consumeGenerationCancelReason(conversationId)
+            if (useLiveUpdate) {
+                clearLiveUpdateSession(conversationId)
+            }
+            if (shouldConsumeWelcomePhraseAppContext) {
+                pendingUiWelcomePhraseForAppContext.remove(conversationId)
+            }
+            var finalConversation = getConversationFlow(conversationId).value
+            continuationDedupeConfig?.let { config ->
+                val dedupedConversation = applyContinuationDedupe(finalConversation, config)
+                if (dedupedConversation != finalConversation) {
+                    finalConversation = dedupedConversation
+                    updateConversation(conversationId, dedupedConversation)
+                }
+            }
+            val autoContinueCandidate = if (
+                settings.autoContinueOnTruncation &&
+                autoContinueAttemptsRemaining > 0 &&
+                shouldAutoContinueForFinishReasons(latestFinishReasons) &&
+                settings.groupChatTemplates.none { it.id == finalConversation.assistantId }
+            ) {
+                resolveContinueCandidate(finalConversation)
+            } else {
+                null
+            }
+            val shouldAutoResumePauseTurn = autoContinueAttemptsRemaining > 0 &&
+                shouldAutoResumeForPauseTurn(latestFinishReasons) &&
+                settings.groupChatTemplates.none { it.id == finalConversation.assistantId }
+
+            saveConversation(conversationId, finalConversation)
+            if (shouldAutoResumePauseTurn) {
+                Log.i(
+                    TAG,
+                    "Auto-resume pause_turn once: conversationId=$conversationId reasons=$latestFinishReasons"
+                )
+                handleMessageComplete(
+                    conversationId = conversationId,
+                    messageRange = messageRange,
+                    autoContinueAttemptsRemaining = autoContinueAttemptsRemaining - 1,
+                )
+                return@onSuccess
+            }
+            if (autoContinueCandidate != null) {
+                Log.i(
+                    TAG,
+                    "Auto-continue once: conversationId=$conversationId reasons=$latestFinishReasons"
+                )
+                val continuePrompt = buildHiddenContinuePrompt(
+                    previousAssistantText = autoContinueCandidate.originalText,
+                    tailChars = CONTINUE_TAIL_CHARS_DEFAULT,
+                )
+                handleMessageComplete(
+                    conversationId = conversationId,
+                    messageRange = 0..autoContinueCandidate.nodeIndex,
+                    continueRequest = HiddenContinueRequestConfig(prompt = continuePrompt),
+                    continuationDedupeConfig = ContinuationDedupeConfig(
+                        targetMessageId = autoContinueCandidate.message.id,
+                        originalText = autoContinueCandidate.originalText,
+                    ),
+                    autoContinueAttemptsRemaining = autoContinueAttemptsRemaining - 1,
+                )
+                return@onSuccess
+            }
+            if (!isForeground.value && settings.displaySetting.enableNotificationOnMessageGeneration) {
+                if (useLiveUpdate) liveUpdateNotifier.cancel(conversationId)
+                sendGenerationDoneNotification(conversationId)
+            }
+
+            addConversationReference(conversationId) // 添加引用
+            appScope.launch {
+                coroutineScope {
+                    launch {
+                        // Fetch fresh conversation from DB to ensure we have the latest state
+                        // This matches the manual regeneration pattern which works correctly
+                        val freshConversation = conversationRepo.getConversationById(conversationId)
+                        if (freshConversation != null) {
+                            generateTitle(conversationId, freshConversation)
+                        } else {
+                            Log.w(TAG, "generateTitle: conversation not found in DB for $conversationId")
+                        }
+                    }
+                    launch { generateSuggestion(conversationId, finalConversation) }
+                    
+                    // Auto-summarization check
+                    launch {
+                        checkAndAutoSummarize(conversationId, finalConversation, settings)
+                    }
+                }
+            }.invokeOnCompletion {
+                removeConversationReference(conversationId) // 移除引用
+            }
+        }
+    }
+
+    private fun shouldAutoContinueForFinishReasons(finishReasons: Set<String>): Boolean {
+        if (finishReasons.isEmpty()) return false
+        return finishReasons.any { reason ->
+            when (reason.trim().lowercase(Locale.US)) {
+                "length",
+                "max_tokens",
+                "max_output_tokens",
+                "max_tokens_exceeded",
+                "token_limit_reached" -> true
+                else -> false
+            }
+        }
+    }
+
+    private fun shouldAutoResumeForPauseTurn(finishReasons: Set<String>): Boolean {
+        if (finishReasons.isEmpty()) return false
+        return finishReasons.any { reason ->
+            reason.trim().lowercase(Locale.US) == "pause_turn"
+        }
+    }
+
+    private fun resolveContinueCandidate(conversation: Conversation): ContinueCandidate? {
+        val nodeIndex = conversation.messageNodes.lastIndex
+        if (nodeIndex < 0) return null
+        val message = conversation.messageNodes[nodeIndex].currentMessage
+        if (message.role != MessageRole.ASSISTANT) return null
+        val originalText = message.toContentText().trim()
+        if (originalText.isBlank()) return null
+        return ContinueCandidate(
+            message = message,
+            nodeIndex = nodeIndex,
+            originalText = originalText,
+        )
+    }
+
+    private suspend fun handleGroupChatMessageComplete(
+        conversationId: Uuid,
+        settings: Settings,
+        conversation: Conversation,
+        template: GroupChatTemplate,
+        forcedSpeakerSeatIds: List<Uuid>? = null,
+        baseMessages: List<UIMessage>,
+        appContextTransformer: me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer?,
+        useLiveUpdate: Boolean,
+    ) {
+        if (template.seats.isEmpty()) return
+        val seatsById = template.seats.associateBy { it.id }
+
+        val lastUserText = baseMessages
+            .lastOrNull { it.role == MessageRole.USER }
+            ?.parts
+            ?.filterIsInstance<UIMessagePart.Text>()
+            ?.joinToString("\n") { it.text }
+            ?.trim()
+            .orEmpty()
+
+        val recentAssistantMessages = run {
+            val lastUserIndex = baseMessages.indexOfLast { it.role == MessageRole.USER }
+            if (lastUserIndex <= 0) return@run emptyList<UIMessage>()
+
+            baseMessages
+                .take(lastUserIndex)
+                .asReversed()
+                .filter { message -> message.role == MessageRole.ASSISTANT }
+                .take(2)
+                .reversed()
+        }
+
+        val mentionedSeatIds = resolveMentionedSeatIds(
+            text = lastUserText,
+            settings = settings,
+            template = template,
+        )
+
+        val forcedSeatIds = forcedSpeakerSeatIds
+            ?.filter { seatId -> seatsById.containsKey(seatId) }
+            ?.distinct()
+        val hasExplicitSpeakerOrder = !forcedSeatIds.isNullOrEmpty() || mentionedSeatIds.isNotEmpty()
+        val speakerSeatIds = when {
+            !forcedSeatIds.isNullOrEmpty() -> forcedSeatIds
+            mentionedSeatIds.isNotEmpty() -> mentionedSeatIds
+            else -> routeGroupChatSpeakers(
+                settings = settings,
+                template = template,
+                userText = lastUserText,
+                recentAssistantMessages = recentAssistantMessages,
+            )
+        }
+
+        if (speakerSeatIds.isEmpty()) return
+
+        val resolvedSpeakers = speakerSeatIds
+            .asSequence()
+            .distinct()
+            .mapNotNull { seatId -> seatsById[seatId] }
+            .toList()
+            .let { seats ->
+                if (hasExplicitSpeakerOrder) seats else seats.shuffled()
+            }
+
+        if (resolvedSpeakers.isEmpty()) return
+
+        var runningMessages = baseMessages
+        var includeAppContextTransformer = appContextTransformer != null
+        val speakersGenerated = mutableListOf<GroupChatSeat>()
+
+        suspend fun generateSeatReply(
+            seat: GroupChatSeat,
+            assistant: me.rerere.rikkahub.data.model.Assistant,
+            model: Model,
+            systemPromptSuffix: String? = null,
+        ) {
+            val baseMessagesSnapshot = runningMessages
+
+            val groupContextSuffix = buildGroupChatContextSystemPromptSuffix(
+                settings = settings,
+                template = template,
+                seat = seat,
+                assistant = assistant,
+            )
+            val fullSystemPromptSuffix = buildString {
+                append(groupContextSuffix)
+                if (!systemPromptSuffix.isNullOrBlank()) {
+                    append(systemPromptSuffix)
+                }
+            }
+            val seatAssistant = applySeatOverrides(assistant, seat.overrides, fullSystemPromptSuffix)
+            val seatProvider = model.findProvider(settings.providers)
+            val modelSupportsBuiltIn = model.supportsBuiltInSearch(seatProvider)
+            val useBuiltInSearch = modelSupportsBuiltIn && !seatAssistant.enableSearchAgent &&
+                (
+                    seatAssistant.searchMode is AssistantSearchMode.BuiltIn ||
+                        (seatAssistant.preferBuiltInSearch && seatAssistant.searchMode !is AssistantSearchMode.Off)
+                    )
+            val seatModel = if (useBuiltInSearch) model.ensureBuiltInSearchTool(seatProvider) else model.withoutBuiltInSearchTools()
+
+            val seatInputTransformers = buildList {
+                if (includeAppContextTransformer) {
+                    appContextTransformer?.let(::add)
+                    includeAppContextTransformer = false
+                }
+                addAll(inputTransformers)
+                add(templateTransformer)
+            }
+
+            val promptMessages = buildGroupChatPromptMessagesForSeat(
+                messages = runningMessages,
+                settings = settings,
+                template = template,
+                seatId = seat.id,
+                selfAssistantId = assistant.id,
+            )
+
+            val seatTools = buildList {
+                // Search tools (external), if enabled and not using built-in.
+                when (val searchMode = seatAssistant.searchMode) {
+                    is AssistantSearchMode.Provider,
+                    is AssistantSearchMode.MultiProvider -> {
+                        if (!useBuiltInSearch) {
+                            addAll(
+                                createEffectiveSearchTools(
+                                    settings = settings,
+                                    searchMode = searchMode,
+                                    enableSearchAgent = seatAssistant.enableSearchAgent,
+                                )
+                            )
+                        }
+                    }
+                    is AssistantSearchMode.BuiltIn -> Unit
+                    is AssistantSearchMode.Off -> Unit
+                }
+
+                // MCP tools, if enabled for this seat.
+                if (seatAssistant.mcpServers.isNotEmpty()) {
+                    mcpManager.getAvailableToolsForAssistant(seatAssistant).forEach { tool ->
+                        add(
+                            Tool(
+                                name = tool.name,
+                                description = tool.description ?: "",
+                                parameters = { tool.inputSchema },
+                                requiresUserApproval = tool.requireApproval,
+                                execute = {
+                                    mcpManager.callToolForAssistant(seatAssistant, tool.name, it.jsonObject)
+                                },
+                            )
+                        )
+                    }
+                }
+
+                val hasWorkspaceFiles = seatAssistant.localTools.contains(LocalToolOption.WorkspaceFiles)
+                if (hasWorkspaceFiles) {
+                    addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                }
+                if (seatAssistant.localTools.contains(LocalToolOption.MemorySearch)) {
+                    addAll(
+                        me.rerere.rikkahub.data.ai.tools.MemoryTools.create(
+                            assistantId = seatAssistant.id,
+                            memoryRepository = memoryRepository,
+                        )
+                    )
+                }
+                if (seatAssistant.localTools.contains(LocalToolOption.ChatSearch)) {
+                    addAll(
+                        me.rerere.rikkahub.data.ai.tools.ChatSearchTools.create(
+                            assistantId = seatAssistant.id,
+                            conversationId = conversation.id,
+                            conversationRepo = conversationRepo,
+                        )
+                    )
+                }
+                if (seatAssistant.localTools.contains(LocalToolOption.PythonEngine)) {
+                    add(
+                        createWorkspacePythonTool(
+                            conversationId = conversation.id,
+                            settingsSnapshot = settings,
+                            includeCommonRules = !hasWorkspaceFiles,
+                        )
+                    )
+                }
+
+                val enabledSkills = settings.skills.filter { skill -> skill.id in seatAssistant.enabledSkillIds }
+                if (enabledSkills.isNotEmpty()) {
+                    val scriptableSkills = if (settings.enableSkillScriptExecution) {
+                        enabledSkills.filter { skill -> skill.id in settings.enabledSkillScriptIds }
+                    } else {
+                        emptyList()
+                    }
+                    add(localTools.createSkillFileTool(enabledSkills, scriptableSkills))
+                    if (scriptableSkills.isNotEmpty()) {
+                        add(createSkillScriptTool(conversationId = conversation.id, allowedSkills = scriptableSkills))
+                    }
+                    if (seatAssistant.localTools.contains(LocalToolOption.GetCurrentTime)) {
+                        add(localTools.currentTimeTool)
+                    }
+                }
+            }
+
+            val hasExternalTools = seatTools.isNotEmpty()
+            val seatMaxSteps = if (hasExternalTools || useBuiltInSearch) 256 else 1
+            val seatMemories = if (seatAssistant.enableMemory && !temporaryConversations.contains(conversationId)) {
+                val assistantId = seatAssistant.id.toString()
+                val memoryCacheKey = buildMemoryCacheKey(conversationId, assistantId)
+                val query = lastUserText.trim()
+                val limit = seatAssistant.ragLimit.coerceIn(0, 50)
+                val pinnedMemories = if (seatAssistant.ragIncludeCore) {
+                    withContext(Dispatchers.IO) {
+                        memoryRepository.getPinnedMemoriesOfAssistant(assistantId)
+                    }
+                } else {
+                    emptyList()
+                }
+                val canUseLastTurnMemory = settings.displaySetting.useLastTurnMemoryOnSkip
+                val lastTurnMemories = lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey]
+                var retrievalSkipped = false
+
+                when {
+                    !seatAssistant.useRagMemoryRetrieval -> {
+                        val resolved = withContext(Dispatchers.IO) { memoryRepository.getMemoriesOfAssistant(assistantId) }
+                        lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = resolved
+                        resolved
+                    }
+                    limit <= 0 -> {
+                        lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = pinnedMemories
+                        pinnedMemories
+                    }
+                    query.isNotBlank() -> {
+                        val queryEmbedding = runCatching {
+                            embeddingService.embed(
+                                text = query,
+                                assistantId = assistantId,
+                                source = AIRequestSource.MEMORY_RETRIEVAL,
+                            )
+                        }.getOrElse { t ->
+                            retrievalSkipped = true
+                            Log.w(TAG, "Group chat seat memory query embedding failed: ${t.message}", t)
+                            null
+                        }
+
+                        val results = if (queryEmbedding != null) {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    memoryRepository.retrieveRelevantMemoriesByEmbedding(
+                                        assistantId = assistantId,
+                                        queryEmbedding = queryEmbedding,
+                                        limit = limit,
+                                        similarityThreshold = seatAssistant.ragSimilarityThreshold,
+                                        includeCore = seatAssistant.ragIncludeCore,
+                                        includeEpisodes = seatAssistant.ragIncludeEpisodes,
+                                    )
+                                }
+                            }.getOrElse { t ->
+                                retrievalSkipped = true
+                                Log.w(TAG, "Group chat seat memory retrieval failed: ${t.message}", t)
+                                emptyList()
+                            }
+                        } else {
+                            emptyList()
+                        }
+
+                        val resolved = if (!retrievalSkipped) {
+                            (pinnedMemories + results).distinctBy { it.id }
+                        } else {
+                            val fallback = if (canUseLastTurnMemory) lastTurnMemories else null
+                            val filteredFallback = fallback?.let {
+                                filterMemoriesForRagOptions(
+                                    memories = it,
+                                    includeCore = seatAssistant.ragIncludeCore,
+                                    includeEpisodes = seatAssistant.ragIncludeEpisodes,
+                                )
+                            }.orEmpty()
+                            (pinnedMemories + filteredFallback).distinctBy { it.id }
+                        }
+
+                        if (!retrievalSkipped) {
+                            lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = resolved
+                        }
+                        resolved
+                    }
+                    else -> {
+                        val resolved = withContext(Dispatchers.IO) {
+                            val recent = memoryRepository.getRecentCombinedMemories(
+                                assistantId = assistantId,
+                                limit = limit,
+                                includeCore = seatAssistant.ragIncludeCore,
+                                includeEpisodes = seatAssistant.ragIncludeEpisodes,
+                            )
+                            (pinnedMemories + recent).distinctBy { it.id }
+                        }
+                        lastInjectedMemoriesByConversationAndAssistant[memoryCacheKey] = resolved
+                        resolved
+                    }
+                }
+            } else {
+                null
+            }
+
+            generationHandler.generateText(
+                settings = settings,
+                model = seatModel,
+                messages = promptMessages,
+                conversationId = conversationId,
+                assistant = seatAssistant,
+                memories = seatMemories,
+                enableMemoryTools = false,
+                sessionMemories = if (seatAssistant.enableSessionMemory) {
+                    getConversationFlow(conversationId).value.sessionMemories
+                } else {
+                    emptyList()
+                },
+                enableSessionMemoryTools = true,
+                onSessionMemoriesChanged = { updatedSessionMemories ->
+                    val current = getConversationFlow(conversationId).value
+                    updateConversation(
+                        conversationId,
+                        current.copy(
+                            sessionMemories = updatedSessionMemories,
+                            updateAt = Instant.now(),
+                        )
+                    )
+                },
+                tools = seatTools,
+                inputTransformers = seatInputTransformers,
+                outputTransformers = outputTransformers,
+                truncateIndex = conversation.truncateIndex,
+                enabledModeIds = conversation.enabledModeIds,
+                explicitSkillContextIds = conversation.explicitSkillContextIds,
+                maxSteps = seatMaxSteps,
+                source = AIRequestSource.CHAT,
+                toolApprovalHandler = ToolApprovalHandler { request -> awaitToolApproval(request) },
+                askUserHandler = AskUserHandler { request -> awaitAskUserResponse(request.conversationId, request.toolCallId) },
+            ).collect { chunk ->
+                when (chunk) {
+                    is GenerationChunk.Messages -> {
+                        val appendedMessages = chunk.messages.drop(promptMessages.size)
+                        if (appendedMessages.isEmpty()) return@collect
+
+                        val patchedAppendedMessages = appendedMessages.map { message ->
+                            when (message.role) {
+                                MessageRole.ASSISTANT -> patchGroupChatAssistantMessage(
+                                    message = message,
+                                    seat = seat,
+                                    assistant = assistant,
+                                    model = model,
+                                )
+                                MessageRole.TOOL -> patchGroupChatToolMessage(
+                                    message = message,
+                                    seat = seat,
+                                    assistant = assistant,
+                                    model = model,
+                                )
+                                else -> message
+                            }
+                        }
+
+                        val updatedMessages = baseMessagesSnapshot.toMutableList()
+                        patchedAppendedMessages.forEach { patchedMessage ->
+                            val existingIndex = updatedMessages.indexOfFirst { it.id == patchedMessage.id }
+                            if (existingIndex >= 0) {
+                                updatedMessages[existingIndex] = patchedMessage
+                            } else {
+                                updatedMessages.add(patchedMessage)
+                            }
+                        }
+
+                        val current = getConversationFlow(conversationId).value
+                        val updated = current.updateCurrentMessages(updatedMessages)
+                        updateConversation(conversationId, updated)
+
+                        if (useLiveUpdate) {
+                            val resolvedState = ChatLiveUpdateStateResolver.resolve(updated.currentMessages)
+                            val previousState = liveUpdateStates.put(conversationId, resolvedState)
+                            notifyLiveUpdate(
+                                conversationId = conversationId,
+                                state = resolvedState,
+                                settings = settings,
+                                force = previousState != resolvedState,
+                                error = null,
+                            )
+                        }
+                    }
+                }
+            }
+
+            runningMessages = getConversationFlow(conversationId).value.currentMessages
+        }
+
+        resolvedSpeakers.forEach { seat ->
+            val assistant = settings.getAssistantById(seat.assistantId) ?: return@forEach
+            val seatModelId = seat.overrides.chatModelId ?: assistant.chatModelId ?: settings.chatModelId
+            val seatModel = settings.findModelById(seatModelId) ?: return@forEach
+
+            generateSeatReply(seat = seat, assistant = assistant, model = seatModel)
+            speakersGenerated += seat
+        }
+
+        // Assistant ↔ Assistant replies: only when there's an explicit disagreement or someone gets called out.
+        val speakerIndexBySeatId = speakersGenerated
+            .mapIndexed { index, seat -> seat.id to index }
+            .toMap()
+
+        val speakerPrimaryTextBySeatId = speakersGenerated.associate { seat ->
+            val primaryMessage = runningMessages.lastOrNull { message ->
+                message.role == MessageRole.ASSISTANT && message.speakerSeatId == seat.id
+            }
+            seat.id to (primaryMessage?.toContentText().orEmpty())
+        }
+
+        val disagreementMarkers = listOf(
+            "我不同意",
+            "不同意",
+            "不认同",
+            "反对",
+            "有误",
+            "不对",
+            "错误",
+            "不准确",
+            "i disagree",
+            "disagree with",
+            "that's wrong",
+            "that's incorrect",
+            "incorrect",
+            "not correct",
+        )
+        val otherAssistantReferenceMarkers = listOf(
+            "上面",
+            "前面",
+            "上一位",
+            "前一个",
+            "刚才",
+            "其他助手",
+            "另一位助手",
+            "another assistant",
+            "other assistant",
+            "previous assistant",
+            "above",
+        )
+
+        fun hasExplicitDisagreement(text: String): Boolean {
+            val normalized = text.lowercase(Locale.ROOT)
+            return disagreementMarkers.any { marker -> normalized.contains(marker) }
+        }
+
+        fun shouldInterReplyToPreviousSpeaker(
+            text: String,
+            previousSeat: GroupChatSeat,
+            mentionedSeatIds: Set<Uuid>,
+        ): Boolean {
+            if (!hasExplicitDisagreement(text)) return false
+            if (speakersGenerated.size <= 1) return false
+
+            if (previousSeat.id in mentionedSeatIds) return true
+
+            val previousName = settings.getAssistantById(previousSeat.assistantId)?.name?.trim().orEmpty()
+            val normalized = text.lowercase(Locale.ROOT)
+            if (previousName.isNotBlank() && normalized.contains(previousName.lowercase(Locale.ROOT))) return true
+
+            if (otherAssistantReferenceMarkers.any { marker -> normalized.contains(marker) }) return true
+
+            return false
+        }
+
+        val interReplyPairs = buildList {
+            val usedPairKeys = mutableSetOf<Pair<Uuid, Uuid>>()
+            val usedReplySpeakerSeatIds = mutableSetOf<Uuid>()
+
+            // 1) "Called out": if an assistant explicitly @-mentions someone, the mentioned assistant replies.
+            for (index in speakersGenerated.indices) {
+                if (size >= 3) break
+
+                val replyToSeat = speakersGenerated[index]
+                val replyToText = speakerPrimaryTextBySeatId[replyToSeat.id].orEmpty()
+                if (replyToText.isBlank()) continue
+
+                val mentionedSeatIds = resolveMentionedSeatIds(
+                    text = replyToText,
+                    settings = settings,
+                    template = template,
+                )
+                    .filter { seatId -> seatId != replyToSeat.id && seatsById.containsKey(seatId) }
+                    .distinct()
+
+                mentionedSeatIds.forEach { mentionedSeatId ->
+                    if (size >= 3) return@forEach
+                    if (mentionedSeatId == replyToSeat.id) return@forEach
+
+                    val speakerSeat = seatsById[mentionedSeatId] ?: return@forEach
+                    val key = speakerSeat.id to replyToSeat.id
+                    if (key in usedPairKeys) return@forEach
+                    if (speakerSeat.id in usedReplySpeakerSeatIds) return@forEach
+
+                    add(speakerSeat to replyToSeat)
+                    usedPairKeys.add(key)
+                    usedReplySpeakerSeatIds.add(speakerSeat.id)
+                }
+            }
+
+            // 2) Explicit disagreements: reply to the previous speaker when clearly referenced.
+            for (index in 1 until speakersGenerated.size) {
+                if (size >= 3) break
+
+                val currentSeat = speakersGenerated[index]
+                val previousSeat = speakersGenerated[index - 1]
+                val currentText = speakerPrimaryTextBySeatId[currentSeat.id].orEmpty()
+                if (currentText.isBlank()) continue
+
+                val mentionedSeatIds = resolveMentionedSeatIds(
+                    text = currentText,
+                    settings = settings,
+                    template = template,
+                ).toSet()
+
+                if (!shouldInterReplyToPreviousSpeaker(
+                        text = currentText,
+                        previousSeat = previousSeat,
+                        mentionedSeatIds = mentionedSeatIds,
+                    )
+                ) {
+                    continue
+                }
+
+                val speakerSeat = seatsById[previousSeat.id] ?: continue
+                val key = speakerSeat.id to currentSeat.id
+                if (key in usedPairKeys) continue
+                if (speakerSeat.id in usedReplySpeakerSeatIds) continue
+
+                add(speakerSeat to currentSeat)
+                usedPairKeys.add(key)
+                usedReplySpeakerSeatIds.add(speakerSeat.id)
+            }
+        }
+
+        var remainingInterReplies = 3
+        for ((speaker, replyTo) in interReplyPairs) {
+            if (remainingInterReplies <= 0) break
+
+            val speakerAssistant = settings.getAssistantById(speaker.assistantId) ?: continue
+            val replyToAssistant = settings.getAssistantById(replyTo.assistantId)
+
+            val speakerModelId =
+                speaker.overrides.chatModelId ?: speakerAssistant.chatModelId ?: settings.chatModelId
+            val speakerModel = settings.findModelById(speakerModelId) ?: continue
+
+            val replyToName =
+                replyToAssistant?.name?.ifBlank { "another assistant" } ?: "another assistant"
+            val suffix = buildString {
+                append("\n\n")
+                append("You are now replying to ")
+                append(replyToName)
+                append(". Do not address the user. Keep it concise.")
+            }
+
+            generateSeatReply(
+                seat = speaker,
+                assistant = speakerAssistant,
+                model = speakerModel,
+                systemPromptSuffix = suffix,
+            )
+            remainingInterReplies -= 1
+        }
+    }
+
+    private fun applySeatOverrides(
+        assistant: me.rerere.rikkahub.data.model.Assistant,
+        overrides: GroupChatSeatOverrides,
+        systemPromptSuffix: String?,
+    ): me.rerere.rikkahub.data.model.Assistant {
+        val basePrompt = overrides.systemPrompt ?: assistant.systemPrompt
+        val updatedPrompt = systemPromptSuffix?.let { suffix ->
+            if (suffix.isBlank()) basePrompt else basePrompt + suffix
+        } ?: basePrompt
+
+        return assistant.copy(
+            chatModelId = overrides.chatModelId ?: assistant.chatModelId,
+            thinkingBudget = overrides.thinkingBudget ?: assistant.thinkingBudget,
+            maxTokens = overrides.maxTokens ?: assistant.maxTokens,
+            searchMode = if (overrides.searchEnabled) overrides.searchMode else AssistantSearchMode.Off,
+            preferBuiltInSearch = overrides.searchEnabled && overrides.preferBuiltInSearch,
+            enableSearchAgent = overrides.searchEnabled && assistant.enableSearchAgent && !overrides.preferBuiltInSearch,
+            mcpServers = overrides.mcpServerIds,
+            localTools = assistant.localTools,
+            enableMemory = overrides.memoryEnabled && assistant.enableMemory,
+            systemPrompt = updatedPrompt,
+        )
+    }
+
+    private fun buildGroupChatContextSystemPromptSuffix(
+        settings: Settings,
+        template: GroupChatTemplate,
+        seat: GroupChatSeat,
+        assistant: me.rerere.rikkahub.data.model.Assistant,
+    ): String {
+        val templateName = template.name.trim().ifBlank { "Group Chat" }
+        val assistantsById = settings.assistants.associateBy { it.id }
+        val seatDisplayNames = template.buildSeatDisplayNames(
+            assistantsById = assistantsById,
+            defaultName = "Assistant",
+        )
+        val memberNames = template.seats.mapNotNull { memberSeat ->
+            seatDisplayNames[memberSeat.id]?.trim()?.takeIf { it.isNotBlank() }
+        }
+
+        val membersLine = when {
+            memberNames.isEmpty() -> "unknown"
+            else -> memberNames.joinToString(", ")
+        }
+
+        val selfName = seatDisplayNames[seat.id]
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: assistant.name.trim().ifBlank { "Assistant" }
+        val seatIndex = template.seats.indexOfFirst { it.id == seat.id }.takeIf { it >= 0 }?.plus(1)
+        val seatLabel = seatIndex?.let { index -> "Seat $index" } ?: "Seat"
+
+        return buildString {
+            append("\n\n")
+            appendLine("You are in a group chat.")
+            appendLine("Group: $templateName")
+            template.intro.trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { intro ->
+                    appendLine("Group intro: $intro")
+                }
+            appendLine("Members: $membersLine")
+            appendLine("You are $selfName ($seatLabel).")
+            appendLine("Keep your own style/persona; do not imitate other assistants.")
+            appendLine("You can call out other assistants with @Name or @Name#2 when truly needed (no # means #1), but do it sparingly.")
+            appendLine("Messages from the human user are provided as USER messages prefixed with [Message from ... (user)].")
+            appendLine("Messages from other assistants may be provided as USER messages prefixed with [Message from ... (assistant)]. They are NOT from the human user; treat them as context only.")
+            appendLine("When generating a normal reply, address the human user (unless later instructions explicitly tell you to reply to another assistant).")
+        }
+    }
+
+    private suspend fun buildGroupChatSeatMemorySystemPromptSuffix(
+        conversationId: Uuid,
+        assistant: me.rerere.rikkahub.data.model.Assistant,
+        overrides: GroupChatSeatOverrides,
+        userText: String,
+    ): String? {
+        if (!overrides.memoryEnabled) return null
+        if (temporaryConversations.contains(conversationId)) return null
+
+        val assistantId = assistant.id.toString()
+        val query = userText.trim()
+        val ragMemoriesScored = if (assistant.useRagMemoryRetrieval && query.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    // Always retrieve top-K, then apply the assistant's threshold locally.
+                    // This avoids "no memories at all" when the configured threshold is too strict.
+                    memoryRepository.retrieveRelevantMemoriesWithScores(
+                        assistantId = assistantId,
+                        query = query,
+                        limit = assistant.ragLimit.coerceIn(1, 20),
+                        similarityThreshold = 0f,
+                        includeCore = assistant.ragIncludeCore,
+                        includeEpisodes = assistant.ragIncludeEpisodes,
+                    )
+                }.getOrDefault(emptyList())
+            }
+        } else {
+            emptyList()
+        }
+        val ragMemories = ragMemoriesScored
+            .filter { (_, score) -> score >= assistant.ragSimilarityThreshold }
+            .map { (memory, _) -> memory }
+        val ragFallbackMemories = ragMemoriesScored.map { (memory, _) -> memory }
+
+        val fallbackCoreMemories = withContext(Dispatchers.IO) {
+            runCatching { memoryRepository.getMemoriesOfAssistant(assistantId) }
+                .getOrDefault(emptyList())
+        }
+        val fallbackEpisodes = if (assistant.ragIncludeEpisodes) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    memoryRepository.getRecentCombinedMemories(
+                        assistantId = assistantId,
+                        limit = 200,
+                        includeCore = false,
+                        includeEpisodes = true,
+                    )
+                }.getOrDefault(emptyList())
+            }
+        } else {
+            emptyList()
+        }
+
+        val fallbackMemories = (fallbackCoreMemories + fallbackEpisodes)
+            .filter { memory -> memory.content.isNotBlank() }
+
+        val candidates = when {
+            ragMemories.isNotEmpty() -> ragMemories
+            ragFallbackMemories.isNotEmpty() -> ragFallbackMemories
+            else -> fallbackMemories
+        }
+
+        if (candidates.isEmpty()) return null
+
+        val uniqueByContent = LinkedHashMap<String, me.rerere.rikkahub.data.model.AssistantMemory>()
+        candidates.forEach { memory ->
+            val content = memory.content.trim()
+            if (content.isNotBlank()) {
+                uniqueByContent.putIfAbsent(content, memory.copy(content = content))
+            }
+        }
+        val uniqueMemories = uniqueByContent.values.toList()
+        if (uniqueMemories.isEmpty()) return null
+
+        val sortedByTimeDesc = uniqueMemories.sortedByDescending { it.timestamp }
+        val maxToInclude = 12
+        val selectedMemories = when {
+            sortedByTimeDesc.size <= maxToInclude -> sortedByTimeDesc
+            else -> {
+                val headCount = maxToInclude / 2
+                val tailCount = maxToInclude - headCount
+                (sortedByTimeDesc.take(headCount) + sortedByTimeDesc.takeLast(tailCount))
+                    .distinctBy { it.content }
+            }
+        }
+
+        return buildString {
+            append("\n\n")
+            appendLine("Your personal memories (from the app's memory system):")
+            appendLine("Showing ${selectedMemories.size} of ${uniqueMemories.size}.")
+            selectedMemories.forEach { memory ->
+                append("- ")
+                appendLine(memory.content.take(240))
+            }
+            appendLine("Use these to answer the user when relevant; do not invent extra memories.")
+            appendLine("If the user asks what you remember, you may quote a few relevant items from this list.")
+        }
+    }
+
+    private fun buildGroupChatPromptMessagesForSeat(
+        messages: List<UIMessage>,
+        settings: Settings,
+        template: GroupChatTemplate,
+        seatId: Uuid,
+        selfAssistantId: Uuid,
+    ): List<UIMessage> {
+        if (messages.isEmpty()) {
+            return listOf(
+                UIMessage(
+                    role = MessageRole.USER,
+                    parts = listOf(UIMessagePart.Text("Please reply.")),
+                )
+            )
+        }
+
+        fun isSelfAssistantMessage(message: UIMessage): Boolean {
+            val speakerSeatId = message.speakerSeatId
+            val speakerAssistantId = message.speakerAssistantId
+            return when {
+                speakerSeatId != null -> speakerSeatId == seatId
+                speakerAssistantId != null -> speakerAssistantId == selfAssistantId
+                else -> false
+            }
+        }
+
+        val lastSelfIndex = messages.indexOfLast { message ->
+            message.role == MessageRole.ASSISTANT && isSelfAssistantMessage(message)
+        }
+
+        val assistantsById = settings.assistants.associateBy { it.id }
+        val seatDisplayNames = template.buildSeatDisplayNames(
+            assistantsById = assistantsById,
+            defaultName = "Assistant",
+        )
+        val transformed = messages.mapIndexedNotNull { index, message ->
+            when (message.role) {
+                MessageRole.ASSISTANT -> {
+                    if (isSelfAssistantMessage(message)) return@mapIndexedNotNull message
+
+                    val isUnread = index > lastSelfIndex
+                    val speakerName = resolveGroupChatMessageSpeakerName(
+                        message = message,
+                        settings = settings,
+                        seatDisplayNames = seatDisplayNames,
+                    )
+                    val content = message.toContentText().take(4000)
+                    if (content.isBlank()) return@mapIndexedNotNull null
+                    val prefix = when {
+                        isUnread && speakerName.isNullOrBlank() -> "[Unread message from another assistant (assistant)]"
+                        isUnread -> "[Unread message from $speakerName (assistant)]"
+                        speakerName.isNullOrBlank() -> "[Message from another assistant (assistant)]"
+                        else -> "[Message from $speakerName (assistant)]"
+                    }
+
+                    message.copy(
+                        role = MessageRole.USER,
+                        parts = listOf(
+                            UIMessagePart.Text(
+                                buildString {
+                                    appendLine(prefix)
+                                    append(content)
+                                }
+                            )
+                        )
+                    )
+                }
+
+                MessageRole.USER -> {
+                    val userName = settings.displaySetting.userNickname.trim()
+                        .ifBlank { "User" }
+                    val prefix = "[Message from $userName (user)]"
+
+                    val parts = message.parts
+                    val firstTextIndex = parts.indexOfFirst { it is UIMessagePart.Text }
+                    val updatedParts = if (firstTextIndex >= 0) {
+                        parts.mapIndexed { partIndex, part ->
+                            if (partIndex != firstTextIndex) return@mapIndexed part
+                            val textPart = part as UIMessagePart.Text
+                            UIMessagePart.Text(
+                                buildString {
+                                    appendLine(prefix)
+                                    append(textPart.text.trim())
+                                }
+                            )
+                        }
+                    } else {
+                        listOf(UIMessagePart.Text(prefix)) + parts
+                    }
+
+                    message.copy(parts = updatedParts)
+                }
+
+                MessageRole.TOOL -> {
+                    if (isSelfAssistantMessage(message)) return@mapIndexedNotNull message
+                    // Token economy: tool results are only visible to the seat that invoked them.
+                    null
+                }
+
+                else -> message
+            }
+        }
+
+        if (transformed.isEmpty()) {
+            return listOf(
+                UIMessage(
+                    role = MessageRole.USER,
+                    parts = listOf(UIMessagePart.Text("Please reply.")),
+                )
+            )
+        }
+
+        if (transformed.last().role != MessageRole.USER) {
+            return transformed + UIMessage(
+                role = MessageRole.USER,
+                parts = listOf(UIMessagePart.Text("Please reply.")),
+            )
+        }
+
+        return transformed
+    }
+
+    private fun resolveGroupChatMessageSpeakerName(
+        message: UIMessage,
+        settings: Settings,
+        seatDisplayNames: Map<Uuid, String>,
+    ): String? {
+        val seatId = message.speakerSeatId
+        if (seatId != null) {
+            return seatDisplayNames[seatId]?.trim()?.takeIf { it.isNotBlank() }
+        }
+
+        message.speakerAssistantId?.let { assistantId ->
+            return settings.getAssistantById(assistantId)?.name?.trim()
+        }
+
+        return null
+    }
+
+    private fun patchGroupChatAssistantMessage(
+        message: UIMessage,
+        seat: GroupChatSeat,
+        assistant: me.rerere.rikkahub.data.model.Assistant,
+        model: Model,
+    ): UIMessage {
+        return message.copy(
+            modelId = message.modelId ?: model.id,
+            speakerAssistantId = assistant.id,
+            speakerSeatId = seat.id,
+        )
+    }
+
+    private fun patchGroupChatToolMessage(
+        message: UIMessage,
+        seat: GroupChatSeat,
+        assistant: me.rerere.rikkahub.data.model.Assistant,
+        model: Model,
+    ): UIMessage {
+        return message.copy(
+            modelId = message.modelId ?: model.id,
+            speakerAssistantId = assistant.id,
+            speakerSeatId = seat.id,
+        )
+    }
+
+    private fun resolveMentionedSeatIds(
+        text: String,
+        settings: Settings,
+        template: GroupChatTemplate,
+    ): List<Uuid> {
+        if (text.isBlank() || !text.contains('@')) return emptyList()
+
+        val assistantsById = settings.assistants.associateBy { it.id }
+        val seatDisplayNames = template.buildSeatDisplayNames(
+            assistantsById = assistantsById,
+            defaultName = "Assistant",
+        )
+
+        val keyToSeatIds = mutableMapOf<String, MutableList<Uuid>>()
+        template.seats.forEach { seat ->
+            val assistant = assistantsById[seat.assistantId] ?: return@forEach
+            val keys = buildList {
+                seatDisplayNames[seat.id]?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+            }
+            keys.forEach { key ->
+                val normalized = key.lowercase(Locale.ROOT)
+                keyToSeatIds.getOrPut(normalized) { mutableListOf() }.add(seat.id)
+            }
+        }
+
+        if (keyToSeatIds.isEmpty()) return emptyList()
+
+        val sortedKeys = keyToSeatIds.keys.sortedByDescending { it.length }
+        val result = mutableListOf<Uuid>()
+        val lowerText = text.lowercase(Locale.ROOT)
+
+        var cursor = 0
+        while (true) {
+            val atIndex = lowerText.indexOf('@', startIndex = cursor)
+            if (atIndex < 0) break
+
+            val after = lowerText.substring(atIndex + 1)
+            val matchedKey = sortedKeys.firstOrNull { after.startsWith(it) }
+            if (matchedKey != null) {
+                keyToSeatIds[matchedKey]
+                    ?.forEach { seatId ->
+                        if (seatId !in result) result.add(seatId)
+                    }
+                cursor = atIndex + 1 + matchedKey.length
+            } else {
+                cursor = atIndex + 1
+            }
+        }
+
+        return result
+    }
+
+    private suspend fun routeGroupChatSpeakers(
+        settings: Settings,
+        template: GroupChatTemplate,
+        userText: String,
+        recentAssistantMessages: List<UIMessage>,
+    ): List<Uuid> {
+        val enabledSeats = template.seats.filter { it.defaultEnabled }
+        if (enabledSeats.isEmpty()) return emptyList()
+
+        val fallback = enabledSeats.take(3).map { it.id }
+        val hostModelId = template.hostModelId ?: return fallback
+        val hostModel = settings.findModelById(hostModelId) ?: return fallback
+
+        val assistantsById = settings.assistants.associateBy { it.id }
+        val seatDisplayNames = template.buildSeatDisplayNames(
+            assistantsById = assistantsById,
+            defaultName = "Assistant",
+        )
+        val seatLines = enabledSeats.mapNotNull { seat ->
+            val assistant = assistantsById[seat.assistantId] ?: return@mapNotNull null
+            val name = seatDisplayNames[seat.id]?.trim().orEmpty()
+                .ifBlank { assistant.name.ifBlank { "Assistant" } }
+            val tagNames = assistant.tags.mapNotNull { tagId ->
+                settings.assistantTags.firstOrNull { it.id == tagId }?.name?.trim()?.takeIf { it.isNotBlank() }
+            }
+            buildString {
+                append("- ")
+                append(seat.id.toString())
+                append(": ")
+                append(name)
+                if (tagNames.isNotEmpty()) {
+                    append(" [")
+                    append(tagNames.joinToString(", "))
+                    append("]")
+                }
+            }
+        }
+
+        val routerPrompt = buildString {
+            appendLine("You are the host router for a group chat.")
+            appendLine("You NEVER reply to the user. You ONLY output JSON.")
+            template.hostSystemPrompt.trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { extra ->
+                    appendLine()
+                    appendLine("Extra routing instructions:")
+                    appendLine(extra)
+                }
+            appendLine()
+            appendLine("Rules:")
+            appendLine("- Choose 1 to 3 speakers from the seat list.")
+            appendLine("- Prefer the most relevant seats; avoid redundancy.")
+            appendLine("- Use the conversation context (recent assistant messages + latest user message) when routing.")
+            appendLine("- Output schema: {\"speakers\":[\"<seatId>\", ...]}")
+            appendLine("- Output MUST be a single JSON object with ONLY the \"speakers\" key. No markdown, no explanation.")
+            appendLine()
+            appendLine("Seats:")
+            seatLines.forEach { appendLine(it) }
+            appendLine()
+            val allowedSeatIds = enabledSeats.map { it.id }.toSet()
+            val allowedAssistantIds = enabledSeats.map { it.assistantId }.toSet()
+            val contextMessages = recentAssistantMessages
+                .asSequence()
+                .filter { message -> message.role == MessageRole.ASSISTANT }
+                .toList()
+                .takeLast(2)
+
+            if (contextMessages.isNotEmpty()) {
+                appendLine("Conversation context (chronological; last is the latest user message):")
+                contextMessages.forEach { message ->
+                    val speakerName = resolveGroupChatMessageSpeakerName(
+                        message = message,
+                        settings = settings,
+                        seatDisplayNames = seatDisplayNames,
+                    )?.trim().orEmpty()
+                    val isInSeatList = run {
+                        val seatId = message.speakerSeatId
+                        val assistantId = message.speakerAssistantId
+                        when {
+                            seatId != null -> seatId in allowedSeatIds
+                            assistantId != null -> assistantId in allowedAssistantIds
+                            else -> false
+                        }
+                    }
+
+                    val prefix = when {
+                        speakerName.isNotBlank() && isInSeatList -> "[Assistant: $speakerName]"
+                        speakerName.isNotBlank() -> "[Assistant: $speakerName (not in seat list)]"
+                        isInSeatList -> "[Assistant]"
+                        else -> "[Assistant (not in seat list)]"
+                    }
+                    val content = message.toContentText().take(1200)
+                    if (content.isBlank()) return@forEach
+                    appendLine(prefix)
+                    appendLine(content)
+                }
+                appendLine("[User]")
+                appendLine(userText.take(4000))
+            } else {
+                appendLine("Latest user message:")
+                appendLine(userText.take(4000))
+            }
+        }
+
+        val routerAssistant = me.rerere.rikkahub.data.model.Assistant(
+            name = "GroupChatHostRouter",
+            systemPrompt = routerPrompt,
+            streamOutput = false,
+            enableMemory = false,
+            searchMode = AssistantSearchMode.Off,
+            preferBuiltInSearch = false,
+            mcpServers = emptySet(),
+            localTools = emptyList(),
+            thinkingBudget = 0,
+        )
+
+        var lastMessages: List<UIMessage> = emptyList()
+        generationHandler.generateText(
+            settings = settings,
+            model = hostModel.copy(tools = emptySet()),
+            messages = listOf(
+                UIMessage(
+                    role = MessageRole.USER,
+                    parts = listOf(UIMessagePart.Text("Route the speakers now.")),
+                )
+            ),
+            assistant = routerAssistant,
+            memories = null,
+            tools = emptyList(),
+            inputTransformers = emptyList(),
+            outputTransformers = emptyList(),
+            maxSteps = 1,
+            source = AIRequestSource.GROUP_CHAT_ROUTING,
+        ).collect { chunk ->
+            if (chunk is GenerationChunk.Messages) {
+                lastMessages = chunk.messages
+            }
+        }
+
+        val outputText = lastMessages
+            .lastOrNull { it.role == MessageRole.ASSISTANT }
+            ?.toContentText()
+            ?.trim()
+            .orEmpty()
+
+        val allowedSeatIds = enabledSeats.map { it.id }.toSet()
+        val parsed = parseSeatIdArray(outputText, key = "speakers", allowList = allowedSeatIds)
+        return parsed?.take(3) ?: fallback
+    }
+
+    private fun parseSeatIdArray(
+        text: String,
+        key: String,
+        allowList: Set<Uuid>,
+    ): List<Uuid>? {
+        val jsonText = extractJsonObjectOrNull(text) ?: return null
+        val jsonObject = runCatching { JsonInstant.parseToJsonElement(jsonText) }.getOrNull() as? JsonObject
+            ?: return null
+        val value = jsonObject[key] ?: return null
+        val array = value as? JsonArray ?: return null
+        val ids = array.mapNotNull { element ->
+            element.jsonPrimitiveOrNull
+                ?.contentOrNull
+                ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
+        }
+        return ids.filter { it in allowList }.distinct()
+    }
+
+    private fun extractJsonObjectOrNull(text: String): String? {
+        if (text.isBlank()) return null
+        val trimmed = text.trim()
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+        val start = trimmed.indexOf('{')
+        val end = trimmed.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return trimmed.substring(start, end + 1)
+    }
+
+    private fun createSkillScriptTool(
+        conversationId: Uuid,
+        allowedSkills: List<Skill>,
+    ): Tool {
+        val allowedSkillIds = allowedSkills.map { it.id.toString() }.toSet()
+        val allowedSkillsById = allowedSkills.associateBy { it.id.toString() }
+        val allowedSkillsByName = allowedSkills.groupBy { it.name.trim().lowercase(Locale.ROOT) }
+        val promptVariables = mapOf(
+            SCRIPTABLE_SKILL_LIST_VARIABLE to allowedSkills.joinToString(separator = "\n") { skill ->
+                buildString {
+                    append("- ")
+                    append(skill.name)
+                    append(" | id: ")
+                    append(skill.id.toString())
+                    if (skill.description.isNotBlank()) {
+                        append(" | desc: ")
+                        append(skill.description.replace('\n', ' ').trim())
+                    }
+                }
+            }
+        )
+
+        return Tool(
+            name = "run_skill_script",
+            description = "Run a Python script from an installed Skill package.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("skill_name", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Skill name from the available skills list (preferred). If duplicated, also pass skill_id to disambiguate.")
+                        })
+                        put("skill_id", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Skill id (UUID) from the available skills list (for disambiguation / backward compatibility)")
+                        })
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative script path inside the skill folder (must start with scripts/ and end with .py)")
+                        })
+                        put("input", buildJsonObject {
+                            put("type", "object")
+                            put("description", "Input object passed to the script's run(input: dict) function (default: {}). For CLI-style scripts, use `argv` instead.")
+                        })
+                        put("argv", buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject { put("type", "string") })
+                            put("description", "Optional argv list for CLI-style scripts (when the script has no run(input)). Example: [\"--help\"]")
+                        })
+                        put("timeout_ms", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Execution timeout in milliseconds (default: 60000, max: 300000)")
+                        })
+                        put("max_stdout_chars", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum stdout characters to return (default: 20000, max: 200000)")
+                        })
+                        put("max_stderr_chars", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum stderr characters to return (default: 20000, max: 200000)")
+                        })
+                    },
+                    required = listOf("skill_name", "path"),
+                )
+            },
+            systemPrompt = { _, _ ->
+                if (allowedSkills.isEmpty()) return@Tool ""
+                renderToolSystemPromptTemplate(
+                    template = RUN_SKILL_SCRIPT_SYSTEM_PROMPT_TEMPLATE,
+                    variables = promptVariables,
+                )
+            },
+            systemPromptVariables = { _, _ -> promptVariables },
+            execute = { args ->
+                val obj = args.jsonObject
+                val skillNameRaw = parseWorkspaceToolString(obj, "skill_name", "skillName", "skill")
+                val skillIdRaw = parseWorkspaceToolString(obj, "skill_id", "skillId")
+
+                fun skillToolAllowedListJson(): JsonArray {
+                    return buildJsonArray {
+                        allowedSkills.forEach { skill ->
+                            add(buildJsonObject {
+                                put("id", skill.id.toString())
+                                put("name", skill.name)
+                            })
+                        }
+                    }
+                }
+
+                val resolvedSkill = when {
+                    !skillIdRaw.isNullOrBlank() -> {
+                        if (skillIdRaw !in allowedSkillIds) {
+                            return@Tool buildJsonObject {
+                                put("ok", false)
+                                put("error", "Skill not allowed: $skillIdRaw")
+                                put("error_code", "skill_not_allowed")
+                                put("hint", "Set `skill_name` to a permitted skill name or pass a permitted `skill_id` from the allowed list.")
+                                put("allowed_skills", skillToolAllowedListJson())
+                            }
+                        }
+                        allowedSkillsById[skillIdRaw]
+                    }
+
+                    !skillNameRaw.isNullOrBlank() -> {
+                        val candidates = allowedSkillsByName[skillNameRaw.lowercase(Locale.ROOT)].orEmpty()
+                        when {
+                            candidates.isEmpty() -> {
+                                return@Tool buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Skill not allowed: $skillNameRaw")
+                                    put("error_code", "skill_not_allowed")
+                                    put("hint", "Set `skill_name` to one of the allowed skill names below (it is NOT a path), or pass `skill_id` instead.")
+                                    put("allowed_skills", skillToolAllowedListJson())
+                                }
+                            }
+
+                            candidates.size > 1 -> {
+                                return@Tool buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Ambiguous skill_name: $skillNameRaw")
+                                    put("error_code", "ambiguous_skill_name")
+                                    put("hint", "Pass `skill_id` to disambiguate.")
+                                    put("candidates", buildJsonArray {
+                                        candidates.forEach { skill ->
+                                            add(buildJsonObject {
+                                                put("id", skill.id.toString())
+                                                put("name", skill.name)
+                                            })
+                                        }
+                                    })
+                                }
+                            }
+
+                            else -> candidates.single()
+                        }
+                    }
+
+                    else -> null
+                }
+
+                if (resolvedSkill == null) {
+                    return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Missing skill_name")
+                        put("error_code", "missing_skill_name")
+                        put("hint", "Set `skill_name` to one of the allowed skill names below, or pass `skill_id` instead.")
+                        put("allowed_skills", skillToolAllowedListJson())
+                    }
+                }
+
+                val scriptPathRaw = obj["path"]?.jsonPrimitiveOrNull?.contentOrNull?.trim().orEmpty()
+                val scriptRelativePath = SkillScriptPathUtils.normalizeAndValidateScriptPath(scriptPathRaw)
+                    ?: return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Invalid script path")
+                    }
+
+                val inputElement = obj["input"]
+                val inputObject = when (inputElement) {
+                    null -> buildJsonObject {}
+                    is JsonObject -> inputElement
+                    else -> return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Invalid input: expected object")
+                    }
+                }
+
+                val argvElement = obj["argv"]
+                val argv = when (argvElement) {
+                    null -> null
+                    is JsonArray -> {
+                        val parsed = argvElement.mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+                        if (parsed.size != argvElement.size) {
+                            return@Tool buildJsonObject {
+                                put("ok", false)
+                                put("error", "Invalid argv: expected array of strings")
+                            }
+                        }
+                        parsed
+                    }
+
+                    else -> return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Invalid argv: expected array of strings")
+                    }
+                }
+
+                val timeoutMs = obj["timeout_ms"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toLongOrNull()
+                    ?.coerceIn(1_000, 300_000)
+                    ?: 60_000L
+                val maxStdoutChars = obj["max_stdout_chars"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toIntOrNull()
+                    ?.coerceIn(1, 200_000)
+                    ?: 20_000
+                val maxStderrChars = obj["max_stderr_chars"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toIntOrNull()
+                    ?.coerceIn(1, 200_000)
+                    ?: 20_000
+
+                val mutex = skillScriptMutexes.computeIfAbsent(conversationId) { Mutex() }
+                mutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        val settingsSnapshot = settingsStore.settingsFlow.value
+                        if (!settingsSnapshot.enableSkillScriptExecution) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Skill script execution is disabled in settings")
+                            }
+                        }
+                        if (resolvedSkill.id !in settingsSnapshot.enabledSkillScriptIds) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Skill script execution not allowed for this skill")
+                            }
+                        }
+
+                        val workspaceRootUri = settingsSnapshot.getEffectiveWorkspaceRootTreeUri(conversationId).orEmpty()
+                        if (workspaceRootUri.isBlank()) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Workspace root is not set")
+                            }
+                        }
+
+                        val skillId = resolvedSkill.id.toString()
+                        val skillRoot = File(context.filesDir, "skills/$skillId")
+                        val scriptFile = runCatching {
+                            val target = File(skillRoot, scriptRelativePath)
+                            val rootPath = skillRoot.canonicalFile.toPath()
+                            val filePath = target.canonicalFile.toPath()
+                            if (!filePath.startsWith(rootPath)) null else target
+                        }.getOrNull()
+                            ?: return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Invalid script path")
+                            }
+
+                        val rootDoc = runCatching {
+                            DocumentFile.fromTreeUri(context, Uri.parse(workspaceRootUri))
+                        }.getOrNull()
+                        if (rootDoc?.isDirectory != true) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Workspace root is not accessible")
+                            }
+                        }
+
+                        fun resolveOrCreateDirByRelPath(relPath: String): DocumentFile? {
+                            val segments = relPath.split('/').filter { it.isNotBlank() }
+                            var current: DocumentFile = rootDoc
+                            segments.forEach { seg ->
+                                val existing = current.findFile(seg)
+                                current = when {
+                                    existing != null && existing.isDirectory -> existing
+                                    existing != null -> return null
+                                    else -> current.createDirectory(seg) ?: return null
+                                }
+                            }
+                            return current
+                        }
+
+                        suspend fun ensureAutoWorkDirRelPath(): String? {
+                            val key = conversationId.toString()
+                            val existingBinding = settingsSnapshot.conversationWorkDirs[key]
+                            val existingRelPath = existingBinding?.relPath?.trim().orEmpty()
+                            val validatedExisting = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(existingRelPath)
+                            if (existingBinding?.mode == ConversationWorkDirMode.AUTO && !validatedExisting.isNullOrBlank()) {
+                                return validatedExisting
+                            }
+
+                            val conversation = getConversationFlow(conversationId).value
+                            val base = if (conversation.title.isBlank()) {
+                                SkillScriptPathUtils.datePlaceholderWorkDirBaseName(conversation.createAt)
+                            } else {
+                                SkillScriptPathUtils.sanitizeWorkDirBaseName(conversation.title)
+                            }
+                            val existingNames = runCatching {
+                                rootDoc.listFiles().mapNotNull { it.name }.toSet()
+                            }.getOrDefault(emptySet())
+                            val unique = SkillScriptPathUtils.pickUniqueName(existingNames, base)
+                            val created = rootDoc.createDirectory(unique) ?: return null
+
+                            settingsStore.update { current ->
+                                current.copy(
+                                    conversationWorkDirs = current.conversationWorkDirs + (
+                                        key to ConversationWorkDirBinding(
+                                            mode = ConversationWorkDirMode.AUTO,
+                                            relPath = unique,
+                                        )
+                                    )
+                                )
+                            }
+                            return created.name ?: unique
+                        }
+
+                        val key = conversationId.toString()
+                        val hasConversationRootOverride = settingsSnapshot.getConversationWorkspaceRootTreeUri(conversationId) != null
+                        val workDirRelPath = when (val binding = settingsSnapshot.conversationWorkDirs[key]) {
+                            null -> if (hasConversationRootOverride) "" else ensureAutoWorkDirRelPath()
+                            else -> when (binding.mode) {
+                                ConversationWorkDirMode.MANUAL -> SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(binding.relPath.trim())
+                                ConversationWorkDirMode.AUTO -> {
+                                    if (hasConversationRootOverride) {
+                                        ""
+                                    } else {
+                                        val v = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(binding.relPath.trim())
+                                            ?.takeIf { it.isNotBlank() }
+                                        v ?: ensureAutoWorkDirRelPath()
+                                    }
+                                }
+                            }
+                        } ?: return@withContext buildJsonObject {
+                            put("ok", false)
+                            put("error", "Failed to resolve workspace work directory")
+                        }
+
+                        val externalWorkDir = resolveOrCreateDirByRelPath(workDirRelPath)
+                            ?: return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Workspace work directory is not accessible")
+                            }
+
+                        val internalWorkDir = File(context.filesDir, "skill_workspaces/${conversationId}")
+                        val limits = WorkspaceSyncLimits()
+
+                        val syncIn = runCatching {
+                            WorkspaceSync.syncExternalToInternal(
+                                context = context,
+                                externalDir = externalWorkDir,
+                                internalDir = internalWorkDir,
+                                limits = limits,
+                            )
+                        }.getOrElse {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Failed to sync workspace in: ${it.message}")
+                            }
+                        }
+
+                        val mergedInputObject = if (argv == null) {
+                            inputObject
+                        } else {
+                            JsonObject(inputObject.toMutableMap().apply {
+                                put("argv", buildJsonArray { argv.forEach { add(JsonPrimitive(it)) } })
+                            })
+                        }
+
+                        val inputJson = mergedInputObject.toString()
+                        if (inputJson.length > 200_000) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Input is too large")
+                            }
+                        }
+
+                        val scriptResult = skillScriptRunner.run(
+                            scriptFile = scriptFile,
+                            inputJson = inputJson,
+                            workDir = internalWorkDir,
+                            timeoutMs = timeoutMs,
+                            maxStdoutChars = maxStdoutChars,
+                            maxStderrChars = maxStderrChars,
+                        )
+
+                        val syncOut = runCatching {
+                            WorkspaceSync.syncInternalToExternal(
+                                context = context,
+                                internalDir = internalWorkDir,
+                                externalDir = externalWorkDir,
+                                limits = limits,
+                            )
+                        }.getOrElse {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Failed to sync workspace out: ${it.message}")
+                            }
+                        }
+
+                        val baseResult: MutableMap<String, JsonElement> =
+                            (scriptResult as? JsonObject)?.toMutableMap()
+                                ?: mutableMapOf<String, JsonElement>(
+                                    "ok" to JsonPrimitive(false),
+                                    "error" to JsonPrimitive("Invalid script output"),
+                                )
+                        baseResult["skill_id"] = JsonPrimitive(skillId)
+                        baseResult["skill_name"] = JsonPrimitive(resolvedSkill.name)
+                        baseResult["script_path"] = JsonPrimitive(scriptRelativePath)
+                        baseResult["work_dir"] = JsonPrimitive(workDirRelPath)
+                        baseResult["sync"] = buildJsonObject {
+                            put("in_files", syncIn.filesCopied)
+                            put("in_bytes", syncIn.bytesCopied)
+                            put("in_skipped", syncIn.skippedFiles)
+                            put("out_files", syncOut.filesCopied)
+                            put("out_bytes", syncOut.bytesCopied)
+                            put("out_skipped", syncOut.skippedFiles)
+                        }
+                        JsonObject(baseResult)
+                    }
+                }
+            }
+        )
+    }
+
+    private fun createWorkspacePythonTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+        includeCommonRules: Boolean,
+    ): Tool {
+        return Tool(
+            name = "eval_python",
+            description = "Execute Python code with Chaquopy.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("code", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Python code to execute. Prefer providing `def run(input: dict): ...` and returning a JSON-serializable result.")
+                        })
+                        put("input", buildJsonObject {
+                            put("type", "object")
+                            put("description", "Input object passed to the script's run(input: dict) function (default: {}). For CLI-style scripts, use `argv` instead.")
+                        })
+                        put("argv", buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject { put("type", "string") })
+                            put("description", "Optional argv list for CLI-style scripts (when the script has no run(input)). Example: [\"--help\"]")
+                        })
+                        put("timeout_ms", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Execution timeout in milliseconds (default: 60000, max: 300000)")
+                        })
+                        put("max_stdout_chars", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum stdout characters to return (default: 20000, max: 200000)")
+                        })
+                        put("max_stderr_chars", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum stderr characters to return (default: 20000, max: 200000)")
+                        })
+                    },
+                    required = listOf("code"),
+                )
+            },
+            systemPrompt = { _, _ ->
+                renderToolSystemPromptTemplate(
+                    template = EVAL_PYTHON_SYSTEM_PROMPT_TEMPLATE,
+                    variables = workspaceToolPromptVariables(includeCommonRules),
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+
+                val rawCode = obj["code"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.replace("\r", "")
+                    ?: return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Missing code")
+                    }
+                val code = rawCode.trimEnd()
+                if (code.isBlank()) {
+                    return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Code is empty")
+                    }
+                }
+                if (code.length > 200_000) {
+                    return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Code is too large")
+                    }
+                }
+
+                val inputObject = (obj["input"] as? JsonObject) ?: buildJsonObject { }
+                val argv = (obj["argv"] as? JsonArray)
+                    ?.mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull?.trim() }
+                    ?.filter { it.isNotBlank() }
+                    ?.takeIf { it.isNotEmpty() }
+
+                val timeoutMs = obj["timeout_ms"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toLongOrNull()
+                    ?.coerceIn(1_000, 300_000)
+                    ?: 60_000L
+                val maxStdoutChars = obj["max_stdout_chars"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toIntOrNull()
+                    ?.coerceIn(1, 200_000)
+                    ?: 20_000
+                val maxStderrChars = obj["max_stderr_chars"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?.toIntOrNull()
+                    ?.coerceIn(1, 200_000)
+                    ?: 20_000
+
+                val mergedInputObject = if (argv == null) {
+                    inputObject
+                } else {
+                    JsonObject(inputObject.toMutableMap().apply {
+                        put("argv", buildJsonArray { argv.forEach { add(JsonPrimitive(it)) } })
+                    })
+                }
+
+                val inputJson = mergedInputObject.toString()
+                if (inputJson.length > 200_000) {
+                    return@Tool buildJsonObject {
+                        put("ok", false)
+                        put("error", "Input is too large")
+                    }
+                }
+
+                val mutex = skillScriptMutexes.computeIfAbsent(conversationId) { Mutex() }
+                mutex.withLock {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val externalWorkDir = runCatching {
+                                resolveConversationWorkspaceDir(settingsSnapshot = settingsSnapshot, conversationId = conversationId)
+                            }.getOrElse {
+                                return@withContext buildJsonObject {
+                                    put("ok", false)
+                                    put("error", it.message ?: "Workspace is not accessible")
+                                }
+                            }
+
+                            val internalWorkDir = File(context.filesDir, "skill_workspaces/$conversationId")
+                            val limits = WorkspaceSyncLimits()
+
+                            val syncIn = runCatching {
+                                WorkspaceSync.syncExternalToInternal(
+                                    context = context,
+                                    externalDir = externalWorkDir,
+                                    internalDir = internalWorkDir,
+                                    limits = limits,
+                                )
+                            }.getOrElse {
+                                return@withContext buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Failed to sync workspace in: ${it.message}")
+                                }
+                            }
+
+                            val scriptFile = File(internalWorkDir, "__assistant_eval__.py")
+                            val scriptWritten = runCatching {
+                                scriptFile.writeText(code, Charsets.UTF_8)
+                                true
+                            }.getOrDefault(false)
+                            if (!scriptWritten) {
+                                return@withContext buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Failed to write script")
+                                }
+                            }
+
+                            val scriptResult = runCatching {
+                                skillScriptRunner.run(
+                                    scriptFile = scriptFile,
+                                    inputJson = inputJson,
+                                    workDir = internalWorkDir,
+                                    timeoutMs = timeoutMs,
+                                    maxStdoutChars = maxStdoutChars,
+                                    maxStderrChars = maxStderrChars,
+                                )
+                            }.getOrElse { e ->
+                                buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Python execution failed: ${e.message}")
+                                }
+                            }.also {
+                                runCatching { scriptFile.delete() }
+                            }
+
+                            val syncOut = runCatching {
+                                WorkspaceSync.syncInternalToExternal(
+                                    context = context,
+                                    internalDir = internalWorkDir,
+                                    externalDir = externalWorkDir,
+                                    limits = limits,
+                                )
+                            }.getOrElse {
+                                return@withContext buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Failed to sync workspace out: ${it.message}")
+                                }
+                            }
+
+                            val baseResult: MutableMap<String, JsonElement> =
+                                (scriptResult as? JsonObject)?.toMutableMap()
+                                    ?: mutableMapOf<String, JsonElement>(
+                                        "ok" to JsonPrimitive(false),
+                                        "error" to JsonPrimitive("Invalid script output"),
+                                    )
+                            baseResult["engine"] = JsonPrimitive("chaquopy")
+                            baseResult["sync"] = buildJsonObject {
+                                put("in_files", syncIn.filesCopied)
+                                put("in_bytes", syncIn.bytesCopied)
+                                put("in_skipped", syncIn.skippedFiles)
+                                put("out_files", syncOut.filesCopied)
+                                put("out_bytes", syncOut.bytesCopied)
+                                put("out_skipped", syncOut.skippedFiles)
+                            }
+                            JsonObject(baseResult)
+                        }
+                    }.getOrElse { e ->
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", e.message ?: "Unknown error")
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    private fun guessMimeType(name: String): String {
+        val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase(Locale.ROOT)
+        if (ext.isBlank()) return "application/octet-stream"
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        return mime ?: "application/octet-stream"
+    }
+
+    private fun splitRelPath(relPath: String): List<String> {
+        return relPath.split('/').filter { it.isNotBlank() }
+    }
+
+    private fun resolveDocumentByRelPath(root: DocumentFile, relPath: String): DocumentFile? {
+        val segments = splitRelPath(relPath)
+        if (segments.isEmpty()) return root
+        var current = root
+        segments.forEachIndexed { index, seg ->
+            val next = current.findFile(seg) ?: return null
+            if (index < segments.lastIndex && !next.isDirectory) return null
+            current = next
+        }
+        return current
+    }
+
+    private fun resolveOrCreateDirByRelPath(root: DocumentFile, relPath: String): DocumentFile? {
+        val segments = splitRelPath(relPath)
+        var current = root
+        for (seg in segments) {
+            val existing = current.findFile(seg)
+            current = when {
+                existing != null && existing.isDirectory -> existing
+                existing != null -> return null
+                else -> current.createDirectory(seg) ?: return null
+            }
+        }
+        return current
+    }
+
+    private fun deleteDocumentRecursively(target: DocumentFile): Boolean {
+        if (target.isDirectory) {
+            target.listFiles().forEach { child ->
+                deleteDocumentRecursively(child)
+            }
+        }
+        return runCatching { target.delete() }.getOrDefault(false)
+    }
+
+    private suspend fun resolveConversationWorkspaceDir(
+        settingsSnapshot: Settings,
+        conversationId: Uuid,
+    ): DocumentFile = withContext(Dispatchers.IO) {
+        val currentSettings = settingsStore.settingsFlow.value
+        val effectiveSettings = if (currentSettings.init) settingsSnapshot else currentSettings
+
+        val workspaceRootUri = effectiveSettings.getEffectiveWorkspaceRootTreeUri(conversationId).orEmpty()
+        if (workspaceRootUri.isBlank()) {
+            error("Workspace root is not set")
+        }
+
+        val rootDoc = runCatching {
+            DocumentFile.fromTreeUri(context, Uri.parse(workspaceRootUri))
+        }.getOrNull()
+        if (rootDoc?.isDirectory != true) {
+            error("Workspace root is not accessible")
+        }
+
+        val hasConversationRootOverride = effectiveSettings.getConversationWorkspaceRootTreeUri(conversationId) != null
+
+        suspend fun ensureAutoWorkDirRelPath(): String? {
+            val key = conversationId.toString()
+            val existingBinding = effectiveSettings.conversationWorkDirs[key]
+            val existingRelPath = existingBinding?.relPath?.trim().orEmpty()
+            val validatedExisting = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(existingRelPath)
+            if (existingBinding?.mode == ConversationWorkDirMode.AUTO && !validatedExisting.isNullOrBlank()) {
+                return validatedExisting
+            }
+
+            val conversation = getConversationFlow(conversationId).value
+            val base = if (conversation.title.isBlank()) {
+                SkillScriptPathUtils.datePlaceholderWorkDirBaseName(conversation.createAt)
+            } else {
+                SkillScriptPathUtils.sanitizeWorkDirBaseName(conversation.title)
+            }
+            val existingNames = runCatching {
+                rootDoc.listFiles().mapNotNull { it.name }.toSet()
+            }.getOrDefault(emptySet())
+            val unique = SkillScriptPathUtils.pickUniqueName(existingNames, base)
+            val created = rootDoc.createDirectory(unique) ?: return null
+
+            settingsStore.update { current ->
+                current.copy(
+                    conversationWorkDirs = current.conversationWorkDirs + (
+                        key to ConversationWorkDirBinding(
+                            mode = ConversationWorkDirMode.AUTO,
+                            relPath = unique,
+                        )
+                    )
+                )
+            }
+            return created.name ?: unique
+        }
+
+        val key = conversationId.toString()
+        val workDirRelPath = when (val binding = effectiveSettings.conversationWorkDirs[key]) {
+            null -> if (hasConversationRootOverride) "" else ensureAutoWorkDirRelPath()
+            else -> when (binding.mode) {
+                ConversationWorkDirMode.MANUAL -> SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(binding.relPath.trim())
+                ConversationWorkDirMode.AUTO -> {
+                    if (hasConversationRootOverride) {
+                        ""
+                    } else {
+                        val v = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(binding.relPath.trim())
+                            ?.takeIf { it.isNotBlank() }
+                        v ?: ensureAutoWorkDirRelPath()
+                    }
+                }
+            }
+        } ?: error("Failed to resolve workspace work directory")
+
+        resolveOrCreateDirByRelPath(rootDoc, workDirRelPath)
+            ?: error("Workspace work directory is not accessible")
+    }
+
+    private fun createAskUserTool(conversationId: Uuid): Tool {
+        return Tool(
+            name = "ask_user",
+            description = "Ask the user one or more questions.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("questions", buildJsonObject {
+                            put("type", "array")
+                            put("description", "Array of questions to ask the user. Each question has its own text and 2-4 options. Use this for batch questions.")
+                            put("items", buildJsonObject {
+                                put("type", "object")
+                                put("properties", buildJsonObject {
+                                    put("question", buildJsonObject {
+                                        put("type", "string")
+                                        put("description", "The question text")
+                                    })
+                                    put("options", buildJsonObject {
+                                        put("type", "array")
+                                        put("items", buildJsonObject {
+                                            put("type", "string")
+                                        })
+                                        put("description", "2 to 4 options for the user to choose from")
+                                        put("minItems", 2)
+                                        put("maxItems", 4)
+                                    })
+                                })
+                                put("required", buildJsonArray {
+                                    add(JsonPrimitive("question"))
+                                    add(JsonPrimitive("options"))
+                                })
+                            })
+                            put("minItems", 1)
+                        })
+                        put("question", buildJsonObject {
+                            put("type", "string")
+                            put("description", "A single question (legacy format). Ignored when 'questions' array is provided.")
+                        })
+                        put("options", buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject {
+                                put("type", "string")
+                            })
+                            put("description", "Options for a single question (legacy format). Ignored when 'questions' array is provided.")
+                            put("minItems", 2)
+                            put("maxItems", 4)
+                        })
+                    },
+                    required = listOf()
+                )
+            },
+            systemPrompt = { _, _ -> ASK_USER_SYSTEM_PROMPT_TEMPLATE },
+            execute = {
+                buildJsonObject { put("answer", "") }
+            }
+        )
+    }
+
+    private fun createWorkspaceFileTools(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): List<Tool> {
+        return listOf(
+            createWorkspaceListTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+            createWorkspaceReadFileTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+            createWorkspaceWriteFileTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+            createWorkspaceMkdirTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+            createWorkspaceDeleteTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+            createWorkspaceRenameTool(conversationId = conversationId, settingsSnapshot = settingsSnapshot),
+        )
+    }
+
+    private fun parseWorkspaceToolBool(
+        obj: JsonObject,
+        key: String,
+        defaultValue: Boolean = false,
+        vararg altKeys: String,
+    ): Boolean {
+        val keys = arrayOf(key, *altKeys)
+        for (k in keys) {
+            val parsed = obj[k]?.jsonPrimitiveOrNull?.contentOrNull
+                ?.trim()
+                ?.toBooleanStrictOrNull()
+            if (parsed != null) return parsed
+        }
+        return defaultValue
+    }
+
+    private fun parseWorkspaceToolInt(
+        obj: JsonObject,
+        key: String,
+        defaultValue: Int,
+        min: Int,
+        max: Int,
+        vararg altKeys: String,
+    ): Int {
+        val keys = arrayOf(key, *altKeys)
+        for (k in keys) {
+            val parsed = obj[k]?.jsonPrimitiveOrNull?.contentOrNull
+                ?.trim()
+                ?.toIntOrNull()
+            if (parsed != null) return parsed.coerceIn(min, max)
+        }
+        return defaultValue
+    }
+
+    private fun parseWorkspaceToolString(
+        obj: JsonObject,
+        key: String,
+        vararg altKeys: String,
+    ): String? {
+        val keys = arrayOf(key, *altKeys)
+        for (k in keys) {
+            val value = obj[k]?.jsonPrimitiveOrNull?.contentOrNull
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            if (value != null) return value
+        }
+        return null
+    }
+
+    private fun normalizeWorkspaceToolPath(rawPath: String?, allowBlank: Boolean): String? {
+        val trimmed = rawPath?.trim().orEmpty()
+        if (trimmed.isBlank()) return if (allowBlank) "" else null
+        return SkillScriptPathUtils.normalizeAndValidateWorkspaceFileRelPath(trimmed)
+    }
+
+    private fun normalizeWorkspaceListToolPath(rawPath: String?): String? {
+        val trimmed = rawPath?.trim().orEmpty()
+        if (trimmed.isBlank() || trimmed == "." || trimmed == "/") return ""
+        var normalized = trimmed
+        while (normalized.startsWith("/")) normalized = normalized.removePrefix("/")
+        if (normalized.isBlank()) return ""
+        return normalizeWorkspaceToolPath(normalized, allowBlank = true)
+    }
+
+    private fun workspaceToolInvalidPathError(
+        toolName: String,
+        rawPath: String?,
+        field: String? = null,
+    ): JsonObject {
+        val safeInput = rawPath
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.take(256)
+        val hint = when (toolName) {
+            "workspace_list" -> "Use a relative path like \"folder\" or omit `path` / use \"\" for the workspace root. Do not use \"..\"."
+            "workspace_delete" -> "Use a relative path like \"folder/file.txt\". The workspace root can only be targeted with an empty string \"\" (dangerous). Do not use \"..\"."
+            else -> "Use a relative path like \"folder/file.txt\". Do not start with \"/\" and do not use \"..\"."
+        }
+        return buildJsonObject {
+            put("ok", false)
+            put("error", field?.let { "Invalid $it" } ?: "Invalid path")
+            put("error_code", "invalid_path")
+            if (field != null) put("error_field", field)
+            if (safeInput != null) put("input_path", safeInput)
+            put("hint", hint)
+        }
+    }
+
+    private fun workspaceToolsRequireApproval(settingsSnapshot: Settings): Boolean {
+        return !settingsSnapshot.workspaceFileToolsAllowAll
+    }
+
+    private fun createEffectiveSearchTools(
+        settings: Settings,
+        searchMode: AssistantSearchMode,
+        enableSearchAgent: Boolean,
+    ): List<Tool> {
+        val originalTools = me.rerere.rikkahub.data.ai.tools.SearchTools
+            .createSearchTools(settings, searchMode)
+            .toList()
+        if (!enableSearchAgent) return originalTools
+
+        val searchAgentTool = SearchAgentTools.create(
+            settings = settings,
+            searchMode = searchMode,
+            providerManager = providerManager,
+            requestLogManager = requestLogManager,
+            json = JsonInstant,
+            progressStore = searchAgentProgressStore,
+        ) ?: return originalTools
+
+        return if (settings.searchAgentOverrideOriginalTools) {
+            listOf(searchAgentTool)
+        } else {
+            listOf(searchAgentTool) + originalTools
+        }
+    }
+
+    private fun workspaceToolsCommonSystemPrompt(): String {
+        return WORKSPACE_COMMON_RULES_PROMPT
+    }
+
+    private fun workspaceToolPromptVariables(includeCommonRules: Boolean): Map<String, String> {
+        return mapOf(
+            WORKSPACE_COMMON_RULES_VARIABLE to if (includeCommonRules) {
+                workspaceToolsCommonSystemPrompt()
+            } else {
+                ""
+            }
+        )
+    }
+
+    private fun workspaceToolCustomPromptVariables(): Map<String, String> {
+        return mapOf(
+            WORKSPACE_COMMON_RULES_VARIABLE to workspaceToolsCommonSystemPrompt()
+        )
+    }
+
+    private fun workspaceToolSystemPrompt(
+        toolName: String,
+        includeCommonRules: Boolean,
+    ): String {
+        return renderToolSystemPromptTemplate(
+            template = workspaceToolSystemPromptTemplate(
+                toolName = toolName,
+                includeCommonRules = includeCommonRules,
+            ),
+            variables = workspaceToolPromptVariables(includeCommonRules),
+        )
+    }
+
+    private fun createWorkspaceListTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_list",
+            description = "List workspace files and directories.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative path inside the conversation workspace directory. Omit or use empty string for root.")
+                        })
+                        put("recursive", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Whether to list recursively (default: false).")
+                        })
+                        put("max_entries", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum entries to return (default: 2000, max: 10000).")
+                        })
+                    }
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawPath = parseWorkspaceToolString(obj, "path", "dir", "directory")
+                val normalizedPath = normalizeWorkspaceListToolPath(rawPath)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_list", rawPath = rawPath)
+
+                val recursive = parseWorkspaceToolBool(obj, "recursive", false, "recurse")
+                val maxEntries = parseWorkspaceToolInt(obj, "max_entries", 2000, 1, 10_000, "maxEntries")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+                        val dir = if (normalizedPath.isBlank()) {
+                            workDir
+                        } else {
+                            resolveDocumentByRelPath(workDir, normalizedPath)
+                        } ?: return@withContext buildJsonObject {
+                            put("ok", false)
+                            put("error", "Path not found: ${normalizedPath.ifBlank { "/" }}")
+                        }
+
+                        if (!dir.isDirectory) {
+                            return@withContext buildJsonObject {
+                                put("ok", false)
+                                put("error", "Not a directory: ${normalizedPath.ifBlank { "/" }}")
+                            }
+                        }
+
+                        var truncated = false
+                        var count = 0
+                        val entries = buildJsonArray {
+                            val stack = ArrayDeque<Pair<DocumentFile, String>>()
+                            stack.addLast(dir to normalizedPath)
+                            while (stack.isNotEmpty()) {
+                                val (current, prefix) = stack.removeLast()
+                                current.listFiles().forEach { child ->
+                                    if (count >= maxEntries) {
+                                        truncated = true
+                                        return@forEach
+                                    }
+                                    val name = child.name ?: return@forEach
+                                    val childPath = if (prefix.isBlank()) name else "$prefix/$name"
+                                    add(buildJsonObject {
+                                        put("path", childPath)
+                                        put("type", if (child.isDirectory) "dir" else "file")
+                                        if (child.isFile) {
+                                            put("bytes", child.length())
+                                            put("last_modified", child.lastModified())
+                                        }
+                                    })
+                                    count++
+                                    if (recursive && child.isDirectory) {
+                                        stack.addLast(child to childPath)
+                                    }
+                                }
+                            }
+                        }
+
+                        buildJsonObject {
+                            put("ok", true)
+                            put("path", normalizedPath.ifBlank { "/" })
+                            put("entries", entries)
+                            put("truncated", truncated)
+                        }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_list",
+                    includeCommonRules = true,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    private fun createWorkspaceReadFileTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_read_file",
+            description = "Read a workspace text file.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative file path inside the conversation workspace directory.")
+                        })
+                        put("max_chars", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum characters to return (default: 200000, max: 2000000).")
+                        })
+                    },
+                    required = listOf("path"),
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawPath = parseWorkspaceToolString(obj, "path", "file")
+                val normalizedPath = normalizeWorkspaceToolPath(rawPath, allowBlank = false)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_read_file", rawPath = rawPath)
+
+                val maxChars = parseWorkspaceToolInt(obj, "max_chars", 200_000, 1, 2_000_000, "maxChars")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+                        val file = resolveDocumentByRelPath(workDir, normalizedPath)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "File not found: $normalizedPath") }
+
+                        if (!file.isFile) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Not a file: $normalizedPath") }
+                        }
+
+                        val input = context.contentResolver.openInputStream(file.uri)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Failed to open file: $normalizedPath") }
+
+                        val builder = StringBuilder()
+                        var truncated = false
+                        input.bufferedReader(Charsets.UTF_8).use { reader ->
+                            val buffer = CharArray(8192)
+                            while (true) {
+                                val read = reader.read(buffer)
+                                if (read <= 0) break
+                                val remaining = maxChars - builder.length
+                                if (remaining <= 0) {
+                                    truncated = true
+                                    break
+                                }
+                                if (read <= remaining) {
+                                    builder.append(buffer, 0, read)
+                                } else {
+                                    builder.append(buffer, 0, remaining)
+                                    truncated = true
+                                    break
+                                }
+                            }
+                        }
+
+                        buildJsonObject {
+                            put("ok", true)
+                            put("path", normalizedPath)
+                            put("bytes", file.length())
+                            put("last_modified", file.lastModified())
+                            put("truncated", truncated)
+                            put("content", builder.toString())
+                        }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_read_file",
+                    includeCommonRules = false,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    private fun createWorkspaceWriteFileTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_write_file",
+            description = "Write a workspace text file.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative file path inside the conversation workspace directory.")
+                        })
+                        put("content", buildJsonObject {
+                            put("type", "string")
+                            put("description", "File content (UTF-8).")
+                        })
+                        put("overwrite", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Overwrite existing file (default: true).")
+                        })
+                        put("append", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Append to existing file (default: false).")
+                        })
+                        put("create_parents", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Create parent directories if needed (default: true).")
+                        })
+                    },
+                    required = listOf("path", "content"),
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawPath = parseWorkspaceToolString(obj, "path", "file")
+                val normalizedPath = normalizeWorkspaceToolPath(rawPath, allowBlank = false)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_write_file", rawPath = rawPath)
+
+                val content = obj["content"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?: return@Tool buildJsonObject { put("ok", false); put("error", "Missing content") }
+
+                val overwrite = parseWorkspaceToolBool(obj, "overwrite", defaultValue = true)
+                val append = parseWorkspaceToolBool(obj, "append", defaultValue = false)
+                val createParents = parseWorkspaceToolBool(obj, "create_parents", true, "createParents")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+
+                        val segments = splitRelPath(normalizedPath)
+                        val name = segments.lastOrNull()
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Invalid path") }
+                        val parentPath = segments.dropLast(1).joinToString("/")
+
+                        val parent = if (parentPath.isBlank()) {
+                            workDir
+                        } else {
+                            if (createParents) {
+                                resolveOrCreateDirByRelPath(workDir, parentPath)
+                            } else {
+                                resolveDocumentByRelPath(workDir, parentPath)
+                            }
+                        } ?: return@withContext buildJsonObject {
+                            put("ok", false)
+                            put("error", "Parent directory not found: $parentPath")
+                        }
+
+                        if (!parent.isDirectory) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Not a directory: $parentPath") }
+                        }
+
+                        val existing = parent.findFile(name)
+                        if (existing != null) {
+                            if (existing.isDirectory) {
+                                if (!overwrite || append) {
+                                    return@withContext buildJsonObject { put("ok", false); put("error", "Path is a directory: $normalizedPath") }
+                                }
+                                if (!deleteDocumentRecursively(existing)) {
+                                    return@withContext buildJsonObject { put("ok", false); put("error", "Failed to delete existing directory: $normalizedPath") }
+                                }
+                            } else if (!existing.isFile) {
+                                return@withContext buildJsonObject { put("ok", false); put("error", "Invalid destination type: $normalizedPath") }
+                            }
+                        }
+
+                        val resolvedExisting = parent.findFile(name)
+                        if (resolvedExisting != null && !append && !overwrite) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "File exists: $normalizedPath") }
+                        }
+
+                        val target = resolvedExisting ?: parent.createFile(guessMimeType(name), name)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Failed to create file: $normalizedPath") }
+
+                        if (!target.isFile) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Not a file: $normalizedPath") }
+                        }
+
+                        val mode = if (append) "wa" else "wt"
+                        val out = context.contentResolver.openOutputStream(target.uri, mode)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Failed to open file: $normalizedPath") }
+
+                        val bytes = content.toByteArray(Charsets.UTF_8)
+                        out.use { it.write(bytes) }
+
+                        buildJsonObject {
+                            put("ok", true)
+                            put("path", normalizedPath)
+                            put("bytes_written", bytes.size)
+                        }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_write_file",
+                    includeCommonRules = false,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    private fun createWorkspaceMkdirTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_mkdir",
+            description = "Create a workspace directory.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative directory path inside the conversation workspace directory.")
+                        })
+                        put("parents", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Create parent directories if needed (default: true).")
+                        })
+                    },
+                    required = listOf("path"),
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawPath = parseWorkspaceToolString(obj, "path", "dir", "directory")
+                val normalizedPath = normalizeWorkspaceToolPath(rawPath, allowBlank = false)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_mkdir", rawPath = rawPath)
+
+                val parents = parseWorkspaceToolBool(obj, "parents", true, "create_parents", "createParents")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+
+                        val segments = splitRelPath(normalizedPath)
+                        val name = segments.lastOrNull()
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Invalid path") }
+                        val parentPath = segments.dropLast(1).joinToString("/")
+
+                        val parent = if (parentPath.isBlank()) {
+                            workDir
+                        } else {
+                            if (parents) {
+                                resolveOrCreateDirByRelPath(workDir, parentPath)
+                            } else {
+                                resolveDocumentByRelPath(workDir, parentPath)
+                            }
+                        } ?: return@withContext buildJsonObject {
+                            put("ok", false)
+                            put("error", "Parent directory not found: $parentPath")
+                        }
+
+                        if (!parent.isDirectory) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Not a directory: $parentPath") }
+                        }
+
+                        val existing = parent.findFile(name)
+                        if (existing != null) {
+                            if (existing.isDirectory) {
+                                return@withContext buildJsonObject { put("ok", true); put("path", normalizedPath); put("created", false) }
+                            }
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Path is a file: $normalizedPath") }
+                        }
+
+                        val created = parent.createDirectory(name)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Failed to create directory: $normalizedPath") }
+
+                        buildJsonObject {
+                            put("ok", true)
+                            put("path", normalizedPath)
+                            put("created", created.isDirectory)
+                        }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_mkdir",
+                    includeCommonRules = false,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    private fun createWorkspaceDeleteTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_delete",
+            description = "Delete a workspace file or directory.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Relative path inside the conversation workspace directory. Use empty to delete the workspace directory root (dangerous).")
+                        })
+                        put("recursive", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Delete directories recursively (default: false).")
+                        })
+                        put("missing_ok", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Treat missing path as success (default: false).")
+                        })
+                    },
+                    required = listOf("path"),
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawPath = obj["path"]?.jsonPrimitiveOrNull?.contentOrNull
+                    ?: return@Tool buildJsonObject { put("ok", false); put("error", "Missing path") }
+                val normalizedPath = normalizeWorkspaceToolPath(rawPath, allowBlank = true)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_delete", rawPath = rawPath)
+
+                val recursive = parseWorkspaceToolBool(obj, "recursive", false, "recurse")
+                val missingOk = parseWorkspaceToolBool(obj, "missing_ok", false, "missingOk")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+                        val target = if (normalizedPath.isBlank()) {
+                            workDir
+                        } else {
+                            resolveDocumentByRelPath(workDir, normalizedPath)
+                        }
+
+                        if (target == null) {
+                            if (missingOk) {
+                                return@withContext buildJsonObject { put("ok", true); put("path", normalizedPath.ifBlank { "/" }); put("deleted", false) }
+                            }
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Path not found: ${normalizedPath.ifBlank { "/" }}") }
+                        }
+
+                        if (target.isDirectory) {
+                            if (!recursive && target.listFiles().isNotEmpty()) {
+                                return@withContext buildJsonObject {
+                                    put("ok", false)
+                                    put("error", "Directory is not empty (set recursive=true): ${normalizedPath.ifBlank { "/" }}")
+                                }
+                            }
+                            val deleted = deleteDocumentRecursively(target)
+                            buildJsonObject { put("ok", deleted); put("path", normalizedPath.ifBlank { "/" }); put("deleted", deleted) }
+                        } else {
+                            val deleted = runCatching { target.delete() }.getOrDefault(false)
+                            buildJsonObject { put("ok", deleted); put("path", normalizedPath.ifBlank { "/" }); put("deleted", deleted) }
+                        }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_delete",
+                    includeCommonRules = false,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    private fun createWorkspaceRenameTool(
+        conversationId: Uuid,
+        settingsSnapshot: Settings,
+    ): Tool {
+        return Tool(
+            name = "workspace_rename",
+            description = "Rename or move a workspace file or directory.",
+            parameters = {
+                InputSchema.Obj(
+                    properties = buildJsonObject {
+                        put("from", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Source relative path inside the conversation workspace directory.")
+                        })
+                        put("to", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Destination relative path inside the conversation workspace directory.")
+                        })
+                        put("overwrite", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Overwrite destination if exists (default: false).")
+                        })
+                        put("create_parents", buildJsonObject {
+                            put("type", "boolean")
+                            put("description", "Create parent directories if needed (default: true).")
+                        })
+                    },
+                    required = listOf("from", "to"),
+                )
+            },
+            requiresUserApproval = workspaceToolsRequireApproval(settingsSnapshot),
+            execute = { args ->
+                val obj = args.jsonObject
+                val rawFrom = parseWorkspaceToolString(obj, "from", "source", "src")
+                val fromPath = normalizeWorkspaceToolPath(rawFrom, allowBlank = false)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_rename", rawPath = rawFrom, field = "from")
+                val rawTo = parseWorkspaceToolString(obj, "to", "dest", "dst", "destination")
+                val toPath = normalizeWorkspaceToolPath(rawTo, allowBlank = false)
+                    ?: return@Tool workspaceToolInvalidPathError(toolName = "workspace_rename", rawPath = rawTo, field = "to")
+
+                val overwrite = parseWorkspaceToolBool(obj, "overwrite", defaultValue = false)
+                val createParents = parseWorkspaceToolBool(obj, "create_parents", true, "createParents")
+
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val workDir = resolveConversationWorkspaceDir(settingsSnapshot, conversationId)
+
+                        val source = resolveDocumentByRelPath(workDir, fromPath)
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Source not found: $fromPath") }
+
+                        if (source.isDirectory && toPath.startsWith("$fromPath/")) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Cannot move a directory into itself") }
+                        }
+
+                        val toSegments = splitRelPath(toPath)
+                        val toName = toSegments.lastOrNull()
+                            ?: return@withContext buildJsonObject { put("ok", false); put("error", "Invalid to") }
+                        val toParentPath = toSegments.dropLast(1).joinToString("/")
+
+                        val destParent = if (toParentPath.isBlank()) {
+                            workDir
+                        } else {
+                            if (createParents) {
+                                resolveOrCreateDirByRelPath(workDir, toParentPath)
+                            } else {
+                                resolveDocumentByRelPath(workDir, toParentPath)
+                            }
+                        } ?: return@withContext buildJsonObject { put("ok", false); put("error", "Destination parent not found: $toParentPath") }
+
+                        if (!destParent.isDirectory) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Not a directory: $toParentPath") }
+                        }
+
+                        val existingDest = destParent.findFile(toName)
+                        if (existingDest != null) {
+                            if (!overwrite) {
+                                return@withContext buildJsonObject { put("ok", false); put("error", "Destination exists: $toPath") }
+                            }
+                            if (!deleteDocumentRecursively(existingDest)) {
+                                return@withContext buildJsonObject { put("ok", false); put("error", "Failed to delete destination: $toPath") }
+                            }
+                        }
+
+                        val fromParentPath = splitRelPath(fromPath).dropLast(1).joinToString("/")
+                        if (fromParentPath == toParentPath) {
+                            val renamedOk = runCatching { source.renameTo(toName) }.getOrDefault(false)
+                            if (renamedOk) {
+                                return@withContext buildJsonObject { put("ok", true); put("from", fromPath); put("to", toPath) }
+                            }
+                        }
+
+                        val createdDest = (
+                            if (source.isDirectory) {
+                                destParent.createDirectory(toName)
+                            } else if (source.isFile) {
+                                destParent.createFile(guessMimeType(toName), toName)
+                            } else {
+                                null
+                            }
+                        ) ?: return@withContext buildJsonObject { put("ok", false); put("error", "Failed to create destination: $toPath") }
+
+                        fun copyRec(src: DocumentFile, dst: DocumentFile): Boolean {
+                            if (src.isDirectory) {
+                                if (!dst.isDirectory) return false
+                                src.listFiles().forEach { child ->
+                                    val childName = child.name ?: return@forEach
+                                    val nextDst = when {
+                                        child.isDirectory -> dst.createDirectory(childName)
+                                        child.isFile -> dst.createFile(guessMimeType(childName), childName)
+                                        else -> null
+                                    } ?: return false
+                                    if (!copyRec(child, nextDst)) return false
+                                }
+                                return true
+                            }
+                            if (!src.isFile || !dst.isFile) return false
+                            return runCatching {
+                                context.contentResolver.openInputStream(src.uri)?.use { input ->
+                                    context.contentResolver.openOutputStream(dst.uri, "wt")?.use { output ->
+                                        input.copyTo(output)
+                                    } != null
+                                } ?: false
+                            }.getOrDefault(false)
+                        }
+
+                        val copied = copyRec(source, createdDest)
+                        if (!copied) {
+                            deleteDocumentRecursively(createdDest)
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Failed to copy source to destination") }
+                        }
+
+                        val deleted = deleteDocumentRecursively(source)
+                        if (!deleted) {
+                            return@withContext buildJsonObject { put("ok", false); put("error", "Failed to delete source after copy") }
+                        }
+
+                        buildJsonObject { put("ok", true); put("from", fromPath); put("to", toPath) }
+                    }
+                }.getOrElse { e ->
+                    buildJsonObject { put("ok", false); put("error", e.message ?: "Unknown error") }
+                }
+            },
+            systemPrompt = { _, _ ->
+                workspaceToolSystemPrompt(
+                    toolName = "workspace_rename",
+                    includeCommonRules = false,
+                )
+            },
+            systemPromptVariables = { _, _ -> workspaceToolCustomPromptVariables() },
+        )
+    }
+
+    // 创建搜索工具
+    private fun createSearchTool(settings: Settings, providerIndex: Int? = null): Set<Tool> {
+        // Use the provided providerIndex (from assistant's searchMode) or fall back to global selection
+        val effectiveIndex = providerIndex ?: settings.searchServiceSelected
+        return buildSet {
+            add(
+                Tool(
+                    name = "search_web",
+                    description = "search web for latest information",
+                    parameters = {
+                        val options = settings.searchServices.getOrElse(
+                            index = effectiveIndex,
+                            defaultValue = { SearchServiceOptions.DEFAULT })
+                        val service = SearchService.getService(options)
+                        service.parameters
+                    },
+                    execute = {
+                        val options = settings.searchServices.getOrElse(
+                            index = effectiveIndex,
+                            defaultValue = { SearchServiceOptions.DEFAULT })
+                        val service = SearchService.getService(options)
+                        val result = service.search(
+                            params = it.jsonObject,
+                            commonOptions = settings.searchCommonOptions,
+                            serviceOptions = options,
+                        )
+                        val results =
+                            JsonInstantPretty.encodeToJsonElement(result.getOrThrow()).jsonObject.let { json ->
+                                val map = json.toMutableMap()
+                                val items = map["items"]
+                                if (items is JsonArray) {
+                                    map["items"] = JsonArray(items.mapIndexed { index, item ->
+                                        if (item is JsonObject) {
+                                            JsonObject(item.toMutableMap().apply {
+                                                put("id", JsonPrimitive(Uuid.random().toString().take(6)))
+                                                put("index", JsonPrimitive(index + 1))
+                                            })
+                                        } else {
+                                            item
+                                        }
+                                    })
+                                }
+                                JsonObject(map.toMutableMap().apply {
+                                    put(
+                                        "citation_rules",
+                                        JsonPrimitive(
+                                            me.rerere.rikkahub.data.ai.tools.searchWebToolResultGuidance(
+                                                includeProviderErrors = false,
+                                            )
+                                        ),
+                                    )
+                                })
+                            }
+                        results
+                    }, systemPrompt = { model, _ ->
+                        if (model.tools.isNotEmpty()) return@Tool ""
+                        """
+                    ## tool: search_web
+
+                    ### usage
+                    - You can use the search_web tool to search the internet for the latest news or to confirm some facts.
+                    - You can perform multiple search if needed
+                    - Generate keywords based on the user's question
+                    """.trimIndent()
+                    }
+                )
+            )
+
+            val options = settings.searchServices.getOrElse(
+                index = effectiveIndex,
+                defaultValue = { SearchServiceOptions.DEFAULT })
+            val service = SearchService.getService(options)
+            if (service.scrapingParameters != null) {
+                add(
+                    Tool(
+                        name = "scrape_web",
+                        description = "scrape web for content",
+                        parameters = {
+                            val options = settings.searchServices.getOrElse(
+                                index = effectiveIndex,
+                                defaultValue = { SearchServiceOptions.DEFAULT })
+                            val service = SearchService.getService(options)
+                            service.scrapingParameters
+                        },
+                        execute = {
+                            val options = settings.searchServices.getOrElse(
+                                index = effectiveIndex,
+                                defaultValue = { SearchServiceOptions.DEFAULT })
+                            val service = SearchService.getService(options)
+                            val result = service.scrape(
+                                params = it.jsonObject,
+                                commonOptions = settings.searchCommonOptions,
+                                serviceOptions = options,
+                            )
+                            JsonInstantPretty.encodeToJsonElement(result.getOrThrow()).jsonObject
+                        },
+                        systemPrompt = { model, messages ->
+                            return@Tool """
+                            ## tool: scrape_web
+
+                            ### usage
+                            - You can use the scrape_web tool to scrape url for detailed content.
+                            - You can perform multiple scrape if needed.
+                            - For common problems, try not to use this tool unless the user requests it.
+                        """.trimIndent()
+                        }
+                    ))
+            }
+        }
+    }
+
+    // 检查无效消息
+    private fun checkInvalidMessages(conversationId: Uuid) {
+        val conversation = getConversationFlow(conversationId).value
+        var messagesNodes = conversation.messageNodes
+
+        // Step 1: 移除空消息节点 (do this FIRST to prevent exceptions)
+        messagesNodes = messagesNodes.filter { it.messages.isNotEmpty() }
+
+        // Step 2: 更新无效的selectIndex (do this BEFORE accessing currentMessage)
+        messagesNodes = messagesNodes.map { node ->
+            if (node.selectIndex !in node.messages.indices) {
+                node.copy(selectIndex = 0)
+            } else {
+                node
+            }
+        }
+
+        // Step 3: 移除无效tool call (now safe to access currentMessage)
+        messagesNodes = messagesNodes.mapIndexed { index, node ->
+            val next = if (index < messagesNodes.size - 1) messagesNodes[index + 1] else null
+            val currentMessage = node.currentMessage
+            val toolCalls = currentMessage.getToolCalls()
+            if (toolCalls.isNotEmpty()) {
+                val hasInlineToolResult = currentMessage.getToolResults().isNotEmpty()
+                val nextHasToolResult = next?.currentMessage?.hasPart<UIMessagePart.ToolResult>() == true
+                val hasAnthropicServerToolUse = toolCalls.any { toolCall ->
+                    toolCall.metadata
+                        ?.get(META_ANTHROPIC_TYPE)
+                        ?.jsonPrimitiveOrNull
+                        ?.contentOrNull == TYPE_SERVER_TOOL_USE
+                }
+                if (!hasInlineToolResult && !nextHasToolResult && !hasAnthropicServerToolUse) {
+                    return@mapIndexed node.copy(
+                        messages = node.messages.filter { it.id != currentMessage.id },
+                        selectIndex = node.selectIndex - 1
+                    )
+                }
+            }
+            node
+        }
+
+        // Step 4: Final cleanup after tool call removal
+        messagesNodes = messagesNodes.filter { it.messages.isNotEmpty() }
+        messagesNodes = messagesNodes.map { node ->
+            if (node.selectIndex !in node.messages.indices) {
+                node.copy(selectIndex = 0.coerceAtMost(node.messages.lastIndex))
+            } else {
+                node
+            }
+        }
+
+        updateConversation(conversationId, conversation.copy(messageNodes = messagesNodes))
+    }
+
+    // 生成标题
+    suspend fun generateTitle(
+        conversationId: Uuid,
+        conversation: Conversation,
+        force: Boolean = false
+    ) {
+        val fallbackTitle = buildFallbackTitleFromConversation(conversation)
+        val shouldGenerate = when {
+            force -> true
+            conversation.title.isBlank() -> true
+            fallbackTitle.isNotBlank() && conversation.title.trim() == fallbackTitle -> true
+            else -> false
+        }
+        if (!shouldGenerate) {
+            Log.d(TAG, "generateTitle: skipped (title='${conversation.title.take(20)}', force=$force)")
+            return
+        }
+        Log.d(TAG, "generateTitle: starting for conversation ${conversation.id}, messages=${conversation.messageNodes.size}")
+
+        runCatching {
+            val settings = settingsStore.settingsFlow.first()
+            val model =
+                settings.findModelById(settings.titleModelId) ?: settings.getCurrentChatModel()
+            if (model == null) {
+                Log.w(TAG, "generateTitle: No model found for titleModelId=${settings.titleModelId} and no current chat model")
+                return
+            }
+            val provider = model.findProvider(settings.providers)
+            if (provider == null) {
+                Log.w(TAG, "generateTitle: No provider found for model ${model.displayName}")
+                return
+            }
+
+            val providerHandler = providerManager.getProviderByType(provider)
+            
+            // Check if we have content to generate a title from
+            val contentForTitle = conversation.currentMessages.truncate(conversation.truncateIndex)
+                .joinToString("\n\n") { it.summaryAsText() }
+            
+            if (contentForTitle.isBlank()) {
+                Log.w(TAG, "generateTitle: No content available for title generation (messages=${conversation.messageNodes.size}, truncateIndex=${conversation.truncateIndex})")
+                return
+            }
+            
+            val requestMessages = listOf(
+                UIMessage.user(
+                    prompt = settings.titlePrompt.applyPlaceholders(
+                        "locale" to Locale.getDefault().displayName,
+                        "content" to contentForTitle
+                    )
+                ),
+            )
+            var requestBodyJson: String? = null
+            val params = TextGenerationParams(
+                model = model,
+                temperature = 0.3f,
+                thinkingBudget = 0,
+                onRequestBody = { requestBodyJson = it },
+            )
+            val startAt = System.currentTimeMillis()
+            var failure: Throwable? = null
+            var titleText = ""
+            var rawResponseText = ""
+            try {
+                val result = providerHandler.generateText(
+                    providerSetting = provider,
+                    messages = requestMessages,
+                    params = params,
+                )
+                rawResponseText = result.rawResponse.orEmpty()
+                titleText = result.choices.firstOrNull()?.message?.toContentText()?.trim().orEmpty()
+            } catch (t: Throwable) {
+                failure = t
+                throw t
+            } finally {
+                requestLogManager.logTextGeneration(
+                    source = AIRequestSource.TITLE_SUMMARY,
+                    providerSetting = provider,
+                    params = params,
+                    requestMessages = requestMessages,
+                    requestBodyJson = requestBodyJson,
+                    responseText = titleText,
+                    responseRawText = rawResponseText,
+                    stream = false,
+                    latencyMs = System.currentTimeMillis() - startAt,
+                    durationMs = System.currentTimeMillis() - startAt,
+                    error = failure,
+                )
+            }
+
+            val titleTrimmed = titleText.trim()
+            if (titleTrimmed.isBlank()) {
+                Log.w(TAG, "generateTitle: model returned blank title, keeping existing title")
+                return
+            }
+
+            // 生成完时可能已经开始下一轮流式输出。
+            // 当前会话要优先用内存态；非当前会话则优先回读真实会话，避免把占位会话写回数据库。
+            val latestConversation = getConversationForMerge(conversationId, conversation)
+            val latestFallbackTitle = buildFallbackTitleFromConversation(latestConversation)
+            val shouldApplyToLatest = when {
+                force -> true
+                latestConversation.title.isBlank() -> true
+                latestFallbackTitle.isNotBlank() && latestConversation.title.trim() == latestFallbackTitle -> true
+                else -> false
+            }
+            if (!shouldApplyToLatest) {
+                Log.d(TAG, "generateTitle: apply skipped (title already changed)")
+                return
+            }
+
+            val patchedConversation = latestConversation.copy(title = titleTrimmed)
+            if (getGenerationJob(conversationId) != null) {
+                // 避免生成中写库（可能会落入一份“未完成的 messageNodes”），但 UI 需要立即看到标题变化。
+                updateConversation(conversationId, patchedConversation)
+            } else {
+                saveConversation(conversationId, patchedConversation)
+            }
+
+            runCatching {
+                tryRenameAutoWorkDirAfterTitleGenerated(
+                    settingsSnapshot = settings,
+                    conversationId = conversationId,
+                    title = titleTrimmed,
+                )
+            }.onFailure {
+                Log.w(TAG, "generateTitle: work dir rename skipped: ${it.message}", it)
+            }
+        }.onFailure {
+            Log.e(TAG, "generateTitle failed: ${it.message}", it)
+        }
+    }
+
+    private suspend fun getConversationForMerge(
+        conversationId: Uuid,
+        fallback: Conversation,
+    ): Conversation {
+        val inMemoryConversation = conversations[conversationId]?.value
+        val shouldTrustInMemory = inMemoryConversation != null && (
+            conversationReferences.containsKey(conversationId) ||
+                getGenerationJob(conversationId) != null ||
+                temporaryConversations.contains(conversationId)
+            )
+        if (shouldTrustInMemory) {
+            return inMemoryConversation
+        }
+
+        return conversationRepo.getConversationById(conversationId)
+            ?: inMemoryConversation
+            ?: fallback
+    }
+
+    private fun buildFallbackTitleFromConversation(conversation: Conversation): String {
+        conversation.messageNodes.forEach { node ->
+            if (node.role != MessageRole.USER) return@forEach
+            val message = node.messages.getOrNull(node.selectIndex) ?: node.messages.lastOrNull() ?: return@forEach
+            val candidate = buildFallbackTitleFromText(message.toContentText())
+            if (candidate.isNotBlank()) return candidate
+        }
+        return ""
+    }
+
+    private fun buildFallbackTitleFromText(text: String): String {
+        val normalized = text.trim().replace(Regex("\\s+"), " ")
+        if (normalized.isBlank()) return ""
+        return normalized.takeFirstCodePoints(FALLBACK_TITLE_MAX_CODE_POINTS)
+    }
+
+    private fun String.takeFirstCodePoints(maxCodePoints: Int): String {
+        if (maxCodePoints <= 0 || this.isEmpty()) return ""
+        val codePointCount = this.codePointCount(0, this.length)
+        if (codePointCount <= maxCodePoints) return this
+        val endIndex = this.offsetByCodePoints(0, maxCodePoints)
+        return this.substring(0, endIndex)
+    }
+
+    private suspend fun tryRenameAutoWorkDirAfterTitleGenerated(
+        settingsSnapshot: Settings,
+        conversationId: Uuid,
+        title: String,
+    ) {
+        val workspaceRootUri = settingsSnapshot.getEffectiveWorkspaceRootTreeUri(conversationId).orEmpty()
+        if (workspaceRootUri.isBlank()) return
+
+        val titleTrimmed = title.trim()
+        if (titleTrimmed.isBlank()) return
+
+        val key = conversationId.toString()
+        val binding = settingsSnapshot.conversationWorkDirs[key] ?: return
+        if (binding.mode != ConversationWorkDirMode.AUTO) return
+
+        val relPath = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(binding.relPath.trim()) ?: return
+        if (relPath.contains('/')) return
+        if (!SkillScriptPathUtils.isDatePlaceholderWorkDirBaseName(relPath)) return
+
+        val targetBase = SkillScriptPathUtils.sanitizeWorkDirBaseName(titleTrimmed)
+        if (targetBase == relPath) return
+
+        val mutex = skillScriptMutexes.computeIfAbsent(conversationId) { Mutex() }
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val rootDoc = runCatching {
+                    DocumentFile.fromTreeUri(context, Uri.parse(workspaceRootUri))
+                }.getOrNull()
+                if (rootDoc?.isDirectory != true) return@withContext
+
+                val currentDir = rootDoc.findFile(relPath)
+                if (currentDir?.isDirectory != true) return@withContext
+
+                val existingNames = runCatching {
+                    rootDoc.listFiles().mapNotNull { it.name }.toSet()
+                }.getOrDefault(emptySet())
+                val uniqueTarget = SkillScriptPathUtils.pickUniqueName(existingNames - relPath, targetBase)
+
+                val renamed = runCatching { currentDir.renameTo(uniqueTarget) }.getOrDefault(false)
+                if (!renamed) return@withContext
+
+                settingsStore.update { current ->
+                    val currentBinding = current.conversationWorkDirs[key] ?: return@update current
+                    if (currentBinding.mode != ConversationWorkDirMode.AUTO) return@update current
+
+                    val currentRelPath = SkillScriptPathUtils.normalizeAndValidateWorkDirRelPath(currentBinding.relPath.trim())
+                        ?: return@update current
+                    if (currentRelPath != relPath) return@update current
+
+                    current.copy(
+                        conversationWorkDirs = current.conversationWorkDirs + (
+                            key to currentBinding.copy(relPath = uniqueTarget)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // 生成建议
+    suspend fun generateSuggestion(conversationId: Uuid, conversation: Conversation) {
+        runCatching {
+            val settings = settingsStore.settingsFlow.first()
+            val model = settings.findModelById(settings.suggestionModelId) ?: return
+            val provider = model.findProvider(settings.providers) ?: return
+
+            updateConversation(
+                conversationId,
+                getConversationFlow(conversationId).value.copy(chatSuggestions = emptyList())
+            )
+
+            val providerHandler = providerManager.getProviderByType(provider)
+            val requestMessages = listOf(
+                UIMessage.user(
+                    settings.suggestionPrompt.applyPlaceholders(
+                        "locale" to Locale.getDefault().displayName,
+                        "content" to conversation.currentMessages.truncate(conversation.truncateIndex)
+                            .takeLast(8)
+                            .joinToString("\n\n") { it.summaryAsText() },
+                    ),
+                )
+            )
+            var requestBodyJson: String? = null
+            val params = TextGenerationParams(
+                model = model,
+                temperature = 1.0f,
+                thinkingBudget = 0,
+                onRequestBody = { requestBodyJson = it },
+            )
+            val startAt = System.currentTimeMillis()
+            var failure: Throwable? = null
+            var rawSuggestions = ""
+            var rawResponseText = ""
+            val suggestions = try {
+                val result = providerHandler.generateText(
+                    providerSetting = provider,
+                    messages = requestMessages,
+                    params = params,
+                )
+                rawResponseText = result.rawResponse.orEmpty()
+                rawSuggestions = result.choices.firstOrNull()?.message?.toContentText().orEmpty()
+                rawSuggestions.split("\n")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+            } catch (t: Throwable) {
+                failure = t
+                throw t
+            } finally {
+                requestLogManager.logTextGeneration(
+                    source = AIRequestSource.CHAT_SUGGESTION,
+                    providerSetting = provider,
+                    params = params,
+                    requestMessages = requestMessages,
+                    requestBodyJson = requestBodyJson,
+                    responseText = rawSuggestions,
+                    responseRawText = rawResponseText,
+                    stream = false,
+                    latencyMs = System.currentTimeMillis() - startAt,
+                    durationMs = System.currentTimeMillis() - startAt,
+                    error = failure,
+                )
+            }
+
+            // 这里不能用 DB 快照直接覆盖内存态：如果用户已开始下一轮流式输出，DB 通常不包含正在生成的最后一条消息，
+            // 会导致整条消息在 UI 里短暂消失。必须基于最新内存态合并字段。
+            val latestConversation = getConversationFlow(conversationId).value
+            val patchedConversation = latestConversation.copy(chatSuggestions = suggestions)
+            if (getGenerationJob(conversationId) != null) {
+                // 生成中只更新内存，落库交给下一次消息完成时一起保存。
+                updateConversation(conversationId, patchedConversation)
+            } else {
+                saveConversation(conversationId, patchedConversation)
+            }
+        }.onFailure {
+            it.printStackTrace()
+        }
+    }
+
+    private val conversationDeletionJobs = java.util.concurrent.ConcurrentHashMap<Uuid, Job>()
+    private val recentlyDeletedConversations = java.util.concurrent.ConcurrentHashMap<Uuid, Conversation>()
+
+    // Track recently restored conversations for fade-in animation
+    private val _recentlyRestoredIds = kotlinx.coroutines.flow.MutableStateFlow<Set<Uuid>>(emptySet())
+    val recentlyRestoredIds: kotlinx.coroutines.flow.StateFlow<Set<Uuid>> = _recentlyRestoredIds
+
+    fun deleteConversation(conversation: Conversation) {
+        appScope.launch {
+            getGenerationJob(conversation.id)?.cancel()
+            removeGenerationJob(conversation.id)
+            liveUpdateNotifier.cancel(conversation.id)
+            clearLiveUpdateSession(conversation.id)
+
+            val conversationFull = conversationRepo.getConversationById(conversation.id) ?: return@launch
+
+            // Cancel any pending deletion for this conversation
+            conversationDeletionJobs[conversation.id]?.cancel()
+
+            // Soft delete (DB only, preserve files)
+            conversationRepo.deleteConversation(conversationFull, deleteFiles = false)
+            recentlyDeletedConversations[conversation.id] = conversationFull
+
+            // Schedule file deletion
+            val job = appScope.launch {
+                kotlinx.coroutines.delay(4000)
+                context.deleteChatFiles(conversationFull.files)
+                settingsStore.update { current ->
+                    current.clearConversationWorkspace(conversation.id).copy(
+                        conversationReadPositions = current.conversationReadPositions - conversation.id.toString()
+                    )
+                }
+                conversationDeletionJobs.remove(conversation.id)
+                recentlyDeletedConversations.remove(conversation.id)
+            }
+            conversationDeletionJobs[conversation.id] = job
+        }
+    }
+
+    fun undoDeleteConversation(conversationId: Uuid) {
+        conversationDeletionJobs[conversationId]?.cancel()
+        conversationDeletionJobs.remove(conversationId)
+
+        val conversation = recentlyDeletedConversations[conversationId]
+        if (conversation != null) {
+            appScope.launch {
+                conversationRepo.insertConversation(conversation)
+                recentlyDeletedConversations.remove(conversationId)
+
+                // Track for fade-in animation
+                _recentlyRestoredIds.value = _recentlyRestoredIds.value + conversationId
+
+                // Remove from tracking after animation completes
+                kotlinx.coroutines.delay(1000)
+                _recentlyRestoredIds.value = _recentlyRestoredIds.value - conversationId
+            }
+        }
+    }
+
+
+    // 发送生成完成通知
+    private fun sendGenerationDoneNotification(conversationId: Uuid) {
+        val conversation = getConversationFlow(conversationId).value
+        val notification =
+            NotificationCompat.Builder(context, CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID)
+                .setContentTitle(context.getString(R.string.notification_chat_done_title))
+                .setContentText(conversation.currentMessages.lastOrNull()?.toContentText()?.take(50) ?: "")
+                .setSmallIcon(R.drawable.ic_notification)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setAutoCancel(true)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setContentIntent(getPendingIntent(context, conversationId))
+
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        NotificationManagerCompat.from(context).notify(CHAT_GENERATION_DONE_NOTIFICATION_ID, notification.build())
+    }
+
+    private fun getPendingIntent(context: Context, conversationId: Uuid): PendingIntent {
+        val intent = Intent(context, RouteActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("conversationId", conversationId.toString())
+        }
+        return PendingIntent.getActivity(
+            context,
+            conversationId.hashCode(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    // 更新对话
+    private fun updateConversation(conversationId: Uuid, conversation: Conversation) {
+        if (conversation.id != conversationId) return
+        checkFilesDelete(conversation, getConversationFlow(conversationId).value)
+        conversations.getOrPut(conversationId) { MutableStateFlow(conversation) }.value =
+            conversation
+    }
+
+    // 检查文件删除
+    private fun checkFilesDelete(newConversation: Conversation, oldConversation: Conversation) {
+        val newFiles = newConversation.files
+        val oldFiles = oldConversation.files
+        val deletedFiles = oldFiles.filter { file ->
+            newFiles.none { it == file }
+        }
+        if (deletedFiles.isNotEmpty()) {
+            context.deleteChatFiles(deletedFiles)
+            Log.w(TAG, "checkFilesDelete: $deletedFiles")
+        }
+    }
+
+    // Context Refresh result
+    data class ContextRefreshResult(
+        val success: Boolean,
+        val summary: String = "",
+        val messagesSummarized: Int = 0,
+        val tokensSaved: Int = 0,
+        val errorMessage: String? = null
+    )
+
+    private fun setContextSummaryPendingDivider(conversationId: Uuid, markerIndex: Int) {
+        val current = getConversationFlow(conversationId).value
+        if (markerIndex !in current.messageNodes.indices) return
+        if (current.contextSummaryPendingBoundaryIndex == markerIndex) return
+        updateConversation(
+            conversationId,
+            current.copy(contextSummaryPendingBoundaryIndex = markerIndex)
+        )
+    }
+
+    private fun clearContextSummaryPendingDividerIfMatch(conversationId: Uuid, markerIndex: Int) {
+        val current = getConversationFlow(conversationId).value
+        if (current.contextSummaryPendingBoundaryIndex != markerIndex) return
+        updateConversation(
+            conversationId,
+            current.copy(contextSummaryPendingBoundaryIndex = -1)
+        )
+    }
+
+    // Check if auto-summarization threshold is reached and trigger if needed
+    private suspend fun checkAndAutoSummarize(
+        conversationId: Uuid,
+        conversation: Conversation,
+        settings: Settings
+    ) {
+        try {
+            val assistant = settings.getCurrentAssistant()
+            
+            // Check if auto-summarization is enabled
+            if (!assistant.enableContextRefresh || !assistant.autoRegenerateSummary) {
+                return
+            }
+
+            if (contextSummaryInProgressConversations.contains(conversationId)) {
+                return
+            }
+
+            // Dynamic message pruning and auto-summarize are mutually exclusive.
+            if (assistant.enableHistorySummarization) {
+                return
+            }
+            
+            // Get max history messages setting (null = unlimited, don't auto-summarize)
+            val maxMessages = assistant.maxHistoryMessages ?: return
+            
+            // Calculate new messages since last summary
+            val messages = conversation.currentMessages
+            val lastSummaryIndex = conversation.contextSummaryUpToIndex
+            val hasPreviousSummary = !conversation.contextSummary.isNullOrBlank() && lastSummaryIndex >= 0
+            
+            val messagesToKeep = 2 // Keep last user+assistant exchange
+            val messagesToSummarizeCount = if (hasPreviousSummary && lastSummaryIndex < messages.size) {
+                // Messages after last summary, minus the ones we keep
+                (messages.size - lastSummaryIndex - 1 - messagesToKeep).coerceAtLeast(0)
+            } else {
+                // No previous summary - all messages minus kept ones
+                (messages.size - messagesToKeep).coerceAtLeast(0)
+            }
+            
+            // Check if we've reached the max history messages limit
+            if (messagesToSummarizeCount >= maxMessages) {
+                Log.i(TAG, "Auto-summarization triggered: $messagesToSummarizeCount messages >= max $maxMessages")
+                val result = summarizeAndRefresh(conversationId)
+                if (result.success) {
+                    Log.i(TAG, "Auto-summarization completed: ${result.messagesSummarized} messages summarized, ${result.tokensSaved} tokens saved")
+                } else {
+                    Log.w(TAG, "Auto-summarization failed: ${result.errorMessage}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "checkAndAutoSummarize failed", e)
+        }
+    }
+
+    // Summarize and refresh context
+    suspend fun summarizeAndRefresh(conversationId: Uuid): ContextRefreshResult = withContext(Dispatchers.IO) {
+        var pendingMarkerIndex: Int? = null
+        if (!contextSummaryInProgressConversations.add(conversationId)) {
+            return@withContext ContextRefreshResult(false, errorMessage = "Context summary already in progress")
+        }
+        try {
+            val settings = settingsStore.settingsFlow.first()
+            val assistant = settings.getCurrentAssistant()
+            val conversation = conversationRepo.getConversationById(conversationId)
+                ?: return@withContext ContextRefreshResult(false, errorMessage = "Conversation not found")
+
+            // Get the context summarizer model (fall back to memory summarizer, then chat model)
+            val contextSummarizerModelId =
+                assistant.contextSummarizerModelId
+                    ?: assistant.summarizerModelId
+                    ?: assistant.chatModelId
+                    ?: settings.chatModelId
+            val model = settings.findModelById(contextSummarizerModelId)
+                ?: return@withContext ContextRefreshResult(false, errorMessage = "No model configured")
+            val provider = model.findProvider(settings.providers)
+                ?: return@withContext ContextRefreshResult(false, errorMessage = "No provider found")
+
+
+            val messages = conversation.currentMessages
+            if (messages.isEmpty()) {
+                return@withContext ContextRefreshResult(false, errorMessage = "No messages to summarize")
+            }
+
+            // Determine which messages to summarize
+            val previousSummary = conversation.contextSummary
+            val lastSummaryIndex = conversation.contextSummaryUpToIndex
+            val hasPreviousSummary = !previousSummary.isNullOrBlank() && lastSummaryIndex >= 0
+            
+            // Keep the last 2 messages (user + assistant exchange) so the AI remembers what was just said
+            val messagesToKeep = 2
+            val lastIndexToSummarize = (messages.size - messagesToKeep - 1).coerceAtLeast(0)
+            
+            // Only get messages AFTER the last summary index, but before the last 2 messages
+            val startIndex = if (hasPreviousSummary && lastSummaryIndex < messages.size) {
+                (lastSummaryIndex + 1).coerceAtMost(messages.size)
+            } else {
+                0 // No previous summary, summarize from beginning
+            }
+            
+            val messagesToSummarize = if (startIndex <= lastIndexToSummarize) {
+                messages.subList(startIndex, lastIndexToSummarize + 1)
+            } else {
+                emptyList()
+            }
+            
+            if (messagesToSummarize.isEmpty()) {
+                return@withContext ContextRefreshResult(false, errorMessage = "No new messages to summarize (keeping last exchange)")
+            }
+
+            val markerIndex = messages.lastIndex
+            pendingMarkerIndex = markerIndex
+            setContextSummaryPendingDivider(conversationId, markerIndex)
+
+            // Build summarization prompt - only include NEW messages
+            val messagesText = messagesToSummarize.joinToString("\n") { msg ->
+                "${msg.role}: ${msg.toText().take(500)}" // Limit each message
+            }
+            
+            val previousSummarySection = if (hasPreviousSummary) {
+                """
+                    **Previous Summary:**
+                    $previousSummary
+                """.trimIndent()
+            } else {
+                ""
+            }
+            val promptTemplate = assistant.contextSummaryPrompt.ifBlank {
+                DEFAULT_CONTEXT_SUMMARY_PROMPT
+            }
+            val prompt = promptTemplate.applyPlaceholders(
+                "previous_summary_section" to previousSummarySection,
+                "messages_count" to messagesToSummarize.size.toString(),
+                "messages_text" to messagesText,
+            )
+
+            // Estimate tokens saved (based on messages being summarized)
+            val originalTokens = messagesToSummarize.sumOf { msg ->
+                msg.parts.sumOf { part ->
+                    when (part) {
+                        is UIMessagePart.Text -> part.text.length / 4
+                        else -> 50
+                    }
+                }
+            }
+
+            // Call the model
+            val providerHandler = providerManager.getProviderByType(provider)
+            val requestMessages = listOf(UIMessage.user(prompt))
+            var requestBodyJson: String? = null
+            val params = TextGenerationParams(
+                model = model,
+                temperature = 0.3f,
+                onRequestBody = { requestBodyJson = it },
+            )
+            val startAt = System.currentTimeMillis()
+            var failure: Throwable? = null
+            var summary = ""
+            var rawResponseText = ""
+            try {
+                val response = providerHandler.generateText(
+                    providerSetting = provider,
+                    messages = requestMessages,
+                    params = params
+                )
+                rawResponseText = response.rawResponse.orEmpty()
+                summary = response.choices.firstOrNull()?.message?.toContentText().orEmpty()
+            } catch (t: Throwable) {
+                failure = t
+                throw t
+            } finally {
+                requestLogManager.logTextGeneration(
+                    source = AIRequestSource.CONTEXT_SUMMARY,
+                    providerSetting = provider,
+                    params = params,
+                    requestMessages = requestMessages,
+                    requestBodyJson = requestBodyJson,
+                    responseText = summary,
+                    responseRawText = rawResponseText,
+                    stream = false,
+                    latencyMs = System.currentTimeMillis() - startAt,
+                    durationMs = System.currentTimeMillis() - startAt,
+                    error = failure,
+                )
+            }
+
+            if (summary.isBlank()) {
+                return@withContext ContextRefreshResult(false, errorMessage = "Empty response from model")
+            }
+
+            // Estimate new tokens
+            val summaryTokens = summary.length / 4
+
+            // Update conversation with summary.
+            // Merge into latest in-memory conversation to avoid overwriting newer messages.
+            val now = System.currentTimeMillis()
+            val latestConversation = getConversationFlow(conversationId).value
+            val updatedSummaryBoundaries = (latestConversation.contextSummaryBoundaries + markerIndex)
+                .asSequence()
+                .filter { it >= 0 }
+                .distinct()
+                .sorted()
+                .toList()
+            val safeSummaryUpToIndex = lastIndexToSummarize.coerceIn(
+                minimumValue = -1,
+                maximumValue = latestConversation.currentMessages.lastIndex
+            )
+            val updatedConversation = latestConversation.copy(
+                contextSummary = summary,
+                contextSummaryUpToIndex = safeSummaryUpToIndex, // Index of last message included in summary
+                lastRefreshTime = now,
+                contextSummaryBoundaries = updatedSummaryBoundaries,
+                contextSummaryPendingBoundaryIndex = if (latestConversation.contextSummaryPendingBoundaryIndex == markerIndex) {
+                    -1
+                } else {
+                    latestConversation.contextSummaryPendingBoundaryIndex
+                },
+            )
+
+            // Persist changes
+            conversationRepo.updateConversation(updatedConversation)
+            updateConversation(conversationId, updatedConversation)
+
+            Log.i(TAG, "summarizeAndRefresh: Summarized ${messagesToSummarize.size} new messages, saved ~${originalTokens - summaryTokens} tokens")
+
+            ContextRefreshResult(
+                success = true,
+                summary = summary,
+                messagesSummarized = messagesToSummarize.size,
+                tokensSaved = (originalTokens - summaryTokens).coerceAtLeast(0)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "summarizeAndRefresh failed", e)
+            ContextRefreshResult(false, errorMessage = e.message ?: "Unknown error")
+        } finally {
+            pendingMarkerIndex?.let { markerIndex ->
+                clearContextSummaryPendingDividerIfMatch(conversationId, markerIndex)
+            }
+            contextSummaryInProgressConversations.remove(conversationId)
+        }
+    }
+
+    suspend fun updateContextSummary(conversationId: Uuid, summary: String): Boolean = withContext(Dispatchers.IO) {
+        val updatedSummary = summary.trim()
+        if (updatedSummary.isBlank()) return@withContext false
+        if (contextSummaryInProgressConversations.contains(conversationId)) return@withContext false
+
+        return@withContext try {
+            val currentConversation = getConversationFlow(conversationId).value
+            if (currentConversation.contextSummary.isNullOrBlank()) {
+                false
+            } else if (currentConversation.contextSummary?.trim() == updatedSummary) {
+                true
+            } else {
+                saveConversation(
+                    conversationId = conversationId,
+                    conversation = currentConversation.copy(contextSummary = updatedSummary)
+                )
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "updateContextSummary failed", e)
+            false
+        }
+    }
+
+
+    // 保存对话
+    suspend fun saveConversation(conversationId: Uuid, conversation: Conversation) {
+        val currentConversation = getConversationFlow(conversationId).value
+        val mergedPendingBoundaryIndex = currentConversation.contextSummaryPendingBoundaryIndex
+            .takeIf { it >= 0 }
+            ?: conversation.contextSummaryPendingBoundaryIndex
+
+        // 临时对话不持久化到数据库
+        if (temporaryConversations.contains(conversationId)) {
+            updateConversation(
+                conversationId,
+                conversation.copy(contextSummaryPendingBoundaryIndex = mergedPendingBoundaryIndex)
+            )
+            return
+        }
+
+        val updatedConversation = conversation.copy(
+            contextSummaryPendingBoundaryIndex = mergedPendingBoundaryIndex
+        )
+        // Always update in-memory state (even for empty conversations)
+        // This ensures mode toggles work on new chats before first message
+        updateConversation(conversationId, updatedConversation)
+
+        // 空对话不落库，但仍需要更新内存态（例如：首次发送消息前启用 modes）
+        if (updatedConversation.title.isBlank() && updatedConversation.messageNodes.isEmpty()) return
+
+        try {
+            if (conversationRepo.getConversationById(conversation.id) == null) {
+                conversationRepo.insertConversation(updatedConversation)
+            } else {
+                conversationRepo.updateConversation(updatedConversation)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // 翻译消息
+    fun translateMessage(
+        conversationId: Uuid,
+        message: UIMessage,
+        targetLanguage: Locale
+    ) {
+        appScope.launch(Dispatchers.IO) {
+            try {
+                val settings = settingsStore.settingsFlow.first()
+
+                val messageText = message.parts.filterIsInstance<UIMessagePart.Text>()
+                    .joinToString("\n\n") { it.text }
+                    .trim()
+
+                if (messageText.isBlank()) return@launch
+
+                // Set loading state for translation
+                val loadingText = context.getString(R.string.translating)
+                updateTranslationField(conversationId, message.id, loadingText)
+
+                generationHandler.translateText(
+                    settings = settings,
+                    sourceText = messageText,
+                    targetLanguage = targetLanguage
+                ) { translatedText ->
+                    // Update translation field in real-time
+                    updateTranslationField(conversationId, message.id, translatedText)
+                }.collect { /* Final translation already handled in onStreamUpdate */ }
+
+                // Save the conversation after translation is complete
+                saveConversation(conversationId, getConversationFlow(conversationId).value)
+            } catch (e: Exception) {
+                // Clear translation field on error
+                clearTranslationField(conversationId, message.id)
+                _errorFlow.emit(e)
+            }
+        }
+    }
+
+    private fun updateTranslationField(
+        conversationId: Uuid,
+        messageId: Uuid,
+        translationText: String
+    ) {
+        val currentConversation = getConversationFlow(conversationId).value
+        val updatedNodes = currentConversation.messageNodes.map { node ->
+            if (node.messages.any { it.id == messageId }) {
+                val updatedMessages = node.messages.map { msg ->
+                    if (msg.id == messageId) {
+                        msg.copy(translation = translationText)
+                    } else {
+                        msg
+                    }
+                }
+                node.copy(messages = updatedMessages)
+            } else {
+                node
+            }
+        }
+
+        updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+    }
+
+    fun clearTranslationField(conversationId: Uuid, messageId: Uuid) {
+        val currentConversation = getConversationFlow(conversationId).value
+        val updatedNodes = currentConversation.messageNodes.map { node ->
+            if (node.messages.any { it.id == messageId }) {
+                val updatedMessages = node.messages.map { msg ->
+                    if (msg.id == messageId) {
+                        msg.copy(translation = null)
+                    } else {
+                        msg
+                    }
+                }
+                node.copy(messages = updatedMessages)
+            } else {
+                node
+            }
+        }
+
+        updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+    }
+
+    // 清理对话相关资源
+    fun cleanupConversation(conversationId: Uuid) {
+        getGenerationJob(conversationId)?.cancel()
+        removeGenerationJob(conversationId)
+        liveUpdateNotifier.cancel(conversationId)
+        clearLiveUpdateSession(conversationId)
+        conversations.remove(conversationId)
+
+        appScope.launch(Dispatchers.IO) {
+            val existsInDb = runCatching {
+                conversationRepo.getConversationById(conversationId) != null
+            }.getOrDefault(false)
+            if (existsInDb) return@launch
+            settingsStore.update { current ->
+                current.clearConversationWorkspace(conversationId)
+            }
+        }
+
+        Log.i(
+            TAG,
+            "cleanupConversation: removed $conversationId (current references: ${conversationReferences.size}, generation jobs: ${_generationJobs.value.size})"
+        )
+    }
+}

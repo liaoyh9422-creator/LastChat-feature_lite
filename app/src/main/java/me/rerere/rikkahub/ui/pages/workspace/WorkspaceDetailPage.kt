@@ -222,7 +222,7 @@ private fun WorkspaceBasicPage(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.workspace_detail_workspace_info), style = MaterialTheme.typography.titleMedium)
                     WorkspaceInfoRow(stringResource(R.string.workspace_detail_name), workspace?.name ?: stringResource(R.string.workspace_detail_loading))
-                    WorkspaceInfoRow(stringResource(R.string.workspace_detail_shell_status), workspace?.shellStatus ?: "-")
+                    WorkspaceInfoRow(stringResource(R.string.workspace_detail_shell_status), workspace?.shellStatus?.toShellStatusLabel() ?: "-")
                     Button(onClick = onInstallRootfs, enabled = workspace != null) {
                         Text(
                             when {
@@ -332,6 +332,15 @@ private fun InstallRootfsDialog(
             }
         },
     )
+}
+
+@Composable
+private fun String.toShellStatusLabel(): String = when (this) {
+    WorkspaceShellStatus.DISABLED.name -> stringResource(R.string.workspace_detail_shell_disabled)
+    WorkspaceShellStatus.INSTALLING.name -> stringResource(R.string.workspace_detail_shell_installing)
+    WorkspaceShellStatus.READY.name -> stringResource(R.string.workspace_detail_shell_ready)
+    WorkspaceShellStatus.BROKEN.name -> stringResource(R.string.workspace_detail_shell_broken)
+    else -> this
 }
 
 @Composable

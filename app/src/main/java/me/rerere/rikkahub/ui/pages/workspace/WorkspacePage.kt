@@ -40,6 +40,7 @@ import me.rerere.rikkahub.ui.components.nav.OneUITopAppBar
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.pages.setting.components.SettingsGroup
 import me.rerere.rikkahub.ui.pages.setting.components.SettingGroupItem
+import me.rerere.workspace.WorkspaceShellStatus
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -177,7 +178,7 @@ private fun WorkspaceCard(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = workspace.shellStatus,
+                text = workspace.shellStatus.toShellStatusLabel(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -194,6 +195,15 @@ private fun WorkspaceCard(
             }
         }
     }
+}
+
+@Composable
+private fun String.toShellStatusLabel(): String = when (this) {
+    WorkspaceShellStatus.DISABLED.name -> stringResource(R.string.workspace_detail_shell_disabled)
+    WorkspaceShellStatus.INSTALLING.name -> stringResource(R.string.workspace_detail_shell_installing)
+    WorkspaceShellStatus.READY.name -> stringResource(R.string.workspace_detail_shell_ready)
+    WorkspaceShellStatus.BROKEN.name -> stringResource(R.string.workspace_detail_shell_broken)
+    else -> this
 }
 
 @Composable

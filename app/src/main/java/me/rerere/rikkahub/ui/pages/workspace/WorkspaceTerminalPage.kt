@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.nav.OneUITopAppBar
+import me.rerere.workspace.WorkspaceShellStatus
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -30,12 +31,14 @@ fun WorkspaceTerminalPage(id: String) {
     val vm: WorkspaceDetailVM = koinViewModel(parameters = { parametersOf(id) })
     val state by vm.state.collectAsStateWithLifecycle()
     val terminalState by vm.terminalState.collectAsStateWithLifecycle()
+    val shellReady = state.workspace?.shellStatus == WorkspaceShellStatus.READY.name
 
     Scaffold(
         topBar = {
             OneUITopAppBar(
-                title = state.workspace?.name?.let { "$it · ${stringResource(R.string.workspace_terminal_title)}" }
-                    ?: stringResource(R.string.workspace_terminal_title),
+                title = state.workspace?.name?.let {
+                    stringResource(R.string.workspace_terminal_title_with_name, it)
+                } ?: stringResource(R.string.workspace_terminal_title),
                 scrollBehavior = androidx.compose.material3.TopAppBarDefaults.pinnedScrollBehavior(),
                 navigationIcon = { BackButton() },
             )
@@ -49,7 +52,11 @@ fun WorkspaceTerminalPage(id: String) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = stringResource(R.string.workspace_terminal_loading),
+                text = if (shellReady) {
+                    stringResource(R.string.workspace_terminal_loading)
+                } else {
+                    stringResource(R.string.workspace_terminal_not_installed)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -58,11 +65,11 @@ fun WorkspaceTerminalPage(id: String) {
                 onValueChange = vm::updateTerminalInput,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.workspace_detail_tool_shell)) },
-                enabled = !terminalState.running,
+                enabled = shellReady && !terminalState.running,
             )
             Button(
                 onClick = { vm.executeTerminalCommand(terminalState.input) },
-                enabled = !terminalState.running,
+                enabled = shellReady && !terminalState.running,
             ) {
                 Text(stringResource(R.string.workspace_detail_tool_shell))
             }

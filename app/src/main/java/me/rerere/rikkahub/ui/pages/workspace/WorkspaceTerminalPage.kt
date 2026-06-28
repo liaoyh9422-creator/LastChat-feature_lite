@@ -44,6 +44,7 @@ fun WorkspaceTerminalPage(id: String) {
             )
         },
     ) { innerPadding ->
+        val finished = terminalState.history.lastOrNull()?.let { it is WorkspaceTerminalEntry.Result || it is WorkspaceTerminalEntry.Error } == true
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -92,6 +93,16 @@ fun WorkspaceTerminalPage(id: String) {
                             },
                             modifier = Modifier.padding(12.dp),
                             style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                if (finished) {
+                    item {
+                        Text(
+                            text = stringResource(R.string.workspace_terminal_exited),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp),
                         )
                     }
                 }

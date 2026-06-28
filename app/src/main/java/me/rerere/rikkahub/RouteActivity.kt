@@ -96,6 +96,9 @@ import me.rerere.rikkahub.ui.pages.setting.SettingChaquoPypiPage
 import me.rerere.rikkahub.ui.pages.setting.SettingChaquoPypiPackagePage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
 import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
+import me.rerere.rikkahub.ui.pages.workspace.WorkspaceDetailPage
+import me.rerere.rikkahub.ui.pages.workspace.WorkspacePage
+import me.rerere.rikkahub.ui.pages.workspace.WorkspaceTerminalPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
 import me.rerere.rikkahub.ui.pages.setting.SettingAndroidIntegrationPage
 import me.rerere.rikkahub.ui.pages.setting.SettingFontsPage
@@ -659,7 +662,6 @@ class RouteActivity : ComponentActivity() {
                     composable<Screen.SettingTTS> {
                         SettingTTSPage()
                     }
-
                     composable<Screen.SettingMcp> {
                         SettingMcpPage()
                     }
@@ -668,9 +670,24 @@ class RouteActivity : ComponentActivity() {
                         SettingSkillsPage()
                     }
 
+                    composable<Screen.Workspaces> {
+                        WorkspacePage()
+                    }
+
+                    composable<Screen.WorkspaceDetail> { backStackEntry ->
+                        val route = backStackEntry.toRoute<Screen.WorkspaceDetail>()
+                        WorkspaceDetailPage(route.id)
+                    }
+
+                    composable<Screen.WorkspaceTerminal> { backStackEntry ->
+                        val route = backStackEntry.toRoute<Screen.WorkspaceTerminal>()
+                        WorkspaceTerminalPage(route.id)
+                    }
+
                     composable<Screen.SettingScriptsWorkspace> {
                         SettingScriptsWorkspacePage()
                     }
+
 
                     composable<Screen.SettingChaquoPypi> {
                         SettingChaquoPypiPage()
@@ -822,12 +839,21 @@ sealed interface Screen {
 
     @Serializable
     data object SettingMcp : Screen
-
     @Serializable
     data object SettingSkills : Screen
 
     @Serializable
+    data object Workspaces : Screen
+
+    @Serializable
+    data class WorkspaceDetail(val id: String) : Screen
+
+    @Serializable
+    data class WorkspaceTerminal(val id: String) : Screen
+
+    @Serializable
     data object SettingScriptsWorkspace : Screen
+
 
     @Serializable
     data object SettingChaquoPypi : Screen

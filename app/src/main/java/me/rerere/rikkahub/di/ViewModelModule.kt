@@ -18,7 +18,10 @@ import me.rerere.rikkahub.ui.pages.menu.MenuVM
 import me.rerere.rikkahub.ui.pages.storage.StorageCategoryVM
 import me.rerere.rikkahub.ui.pages.storage.StorageManagerVM
 import me.rerere.rikkahub.ui.pages.translator.TranslatorVM
+import me.rerere.rikkahub.ui.pages.workspace.WorkspaceDetailVM
+import me.rerere.rikkahub.ui.pages.workspace.WorkspaceVM
 import org.koin.core.module.dsl.viewModel
+
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
 
@@ -83,6 +86,14 @@ val viewModelModule = module {
     viewModelOf(::MenuVM)
     viewModelOf(::TextSelectionVM)
     viewModelOf(::StorageManagerVM)
+    viewModelOf(::WorkspaceVM)
+    viewModel<WorkspaceDetailVM> {
+        WorkspaceDetailVM(
+            id = it.get(),
+            repository = get(),
+        )
+    }
+
     viewModel<StorageCategoryVM> {
         StorageCategoryVM(
             categoryKey = it.get(),

@@ -341,6 +341,11 @@ fun SettingScriptsWorkspacePage(vm: SettingVM = koinViewModel()) {
                             )
                         }
                     )
+                    SettingGroupItem(
+                        title = stringResource(R.string.workspace_root_title),
+                        subtitle = stringResource(R.string.workspace_page_title),
+                        onClick = { navController.navigate(Screen.Workspaces) }
+                    )
 
                     SettingGroupItem(
                         title = stringResource(R.string.workspace_file_tools_allow_all_title),
@@ -358,6 +363,7 @@ fun SettingScriptsWorkspacePage(vm: SettingVM = koinViewModel()) {
                             )
                         }
                     )
+
                 }
             }
         }

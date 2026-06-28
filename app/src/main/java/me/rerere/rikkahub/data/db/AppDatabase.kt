@@ -27,6 +27,7 @@ import me.rerere.rikkahub.data.db.dao.ToolResultArchiveDao
 import me.rerere.rikkahub.data.db.dao.ToolResultArchiveChunkDao
 import me.rerere.rikkahub.data.db.dao.ModelQuotaUsageDAO
 import me.rerere.rikkahub.data.db.dao.UsageStatsDAO
+import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.AIRequestLogEntity
 import me.rerere.rikkahub.data.db.entity.BackupLogEntity
 import me.rerere.rikkahub.data.db.entity.ChatEpisodeEntity
@@ -42,6 +43,7 @@ import me.rerere.rikkahub.data.db.entity.ScheduledTaskRunEntity
 import me.rerere.rikkahub.data.db.entity.ToolResultArchiveEntity
 import me.rerere.rikkahub.data.db.entity.ToolResultArchiveChunkEntity
 import me.rerere.rikkahub.data.db.entity.UsageStatsEntity
+import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.utils.JsonInstant
 
@@ -62,8 +64,9 @@ import me.rerere.rikkahub.utils.JsonInstant
         LorebookEntryRevisionEntity::class,
         UsageStatsEntity::class,
         ModelQuotaUsageEntity::class,
+        WorkspaceEntity::class,
     ],
-    version = 39,
+    version = 40,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -133,6 +136,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun usageStatsDao(): UsageStatsDAO
 
     abstract fun modelQuotaUsageDao(): ModelQuotaUsageDAO
+
+    abstract fun workspaceDao(): WorkspaceDAO
 
     companion object {
         const val TAG = "AppDatabase"
@@ -314,6 +319,29 @@ abstract class AppDatabase : RoomDatabase() {
                 Log.i(TAG, "migrate: start migrate from 38 to 39")
                 db.execSQL("ALTER TABLE ConversationEntity ADD COLUMN explicit_skill_context_ids TEXT NOT NULL DEFAULT '[]'")
                 Log.i(TAG, "migrate: migrate from 38 to 39 success")
+            }
+        }
+
+        val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                Log.i(TAG, "migrate: start migrate from 39 to 40")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `workspaces` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `name` TEXT NOT NULL,
+                        `root` TEXT NOT NULL,
+                        `shell_status` TEXT NOT NULL,
+                        `created_at` INTEGER NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        `last_access_at` INTEGER,
+                        `tool_approvals` TEXT NOT NULL DEFAULT '{}'
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_workspaces_root` ON `workspaces` (`root`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_workspaces_updated_at` ON `workspaces` (`updated_at`)")
+                Log.i(TAG, "migrate: migrate from 39 to 40 success")
             }
         }
     }

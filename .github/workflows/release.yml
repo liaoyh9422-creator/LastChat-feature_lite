@@ -27,6 +27,8 @@ on:
         required: true
         default: false
   push:
+    branches:
+      - main
     tags:
       - "*"
 
@@ -67,18 +69,21 @@ jobs:
         run: npm ci
         working-directory: web-ui
 
-      - name: Resolve release metadata
+      - name: Resolve build metadata
         id: meta
         shell: bash
         run: |
           set -euo pipefail
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            BUILD_KIND="release"
             FLAVOR="${{ inputs.flavor }}"
             TAG_NAME="${{ inputs.tag_name }}"
+            ARTIFACT_LABEL="$TAG_NAME"
             DRAFT="${{ inputs.draft }}"
             PRERELEASE="${{ inputs.prerelease }}"
-          else
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            BUILD_KIND="release"
             TAG_NAME="${GITHUB_REF_NAME}"
             TAG_LOWER="$(printf '%s' "$TAG_NAME" | tr '[:upper:]' '[:lower:]')"
 
@@ -92,6 +97,14 @@ jobs:
               FLAVOR="plus"
             fi
 
+            ARTIFACT_LABEL="$TAG_NAME"
+            DRAFT="false"
+            PRERELEASE="false"
+          else
+            BUILD_KIND="ci"
+            FLAVOR="plus"
+            TAG_NAME=""
+            ARTIFACT_LABEL="main-${GITHUB_SHA::7}"
             DRAFT="false"
             PRERELEASE="false"
           fi
@@ -106,15 +119,19 @@ jobs:
               ;;
           esac
 
+          echo "build_kind=$BUILD_KIND" >> "$GITHUB_OUTPUT"
           echo "flavor=$FLAVOR" >> "$GITHUB_OUTPUT"
           echo "flavor_cap=$FLAVOR_CAP" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_label=$ARTIFACT_LABEL" >> "$GITHUB_OUTPUT"
           echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
+          echo "BuildKind: $BUILD_KIND"
           echo "Flavor: $FLAVOR"
           echo "FlavorCap: $FLAVOR_CAP"
-          echo "Tag: $TAG_NAME"
+          echo "ArtifactLabel: $ARTIFACT_LABEL"
+          echo "Tag: ${TAG_NAME:-<none>}"
           echo "Draft: $DRAFT"
           echo "Prerelease: $PRERELEASE"
 
@@ -140,6 +157,7 @@ jobs:
           sed -i '/^android\.aapt2FromMavenOverride=/d' gradle.properties
           echo "Effective gradle.properties:"
           cat gradle.properties
+
       - name: Build release APK
         shell: bash
         run: |
@@ -151,7 +169,6 @@ jobs:
 
           echo "Running $APK_TASK"
           ./gradlew "$APK_TASK" --no-daemon --stacktrace
-
 
       - name: Collect release APK
         id: collect
@@ -184,11 +201,12 @@ jobs:
       - name: Upload build output (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ steps.meta.outputs.flavor }}-${{ steps.meta.outputs.tag_name }}
+          name: ${{ steps.meta.outputs.build_kind }}-${{ steps.meta.outputs.flavor }}-${{ steps.meta.outputs.artifact_label }}
           path: ${{ steps.collect.outputs.dist_dir }}/*
           if-no-files-found: error
 
       - name: Create or update GitHub Release
+        if: ${{ steps.meta.outputs.build_kind == 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}

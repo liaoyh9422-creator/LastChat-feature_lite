@@ -10,3 +10,5 @@
 - Added `LastChatApp` startup cleanup/integrity hooks for tool outputs, workspace temp dirs, and workspace repository integrity checks.
 - Rebuilt `DocumentAsPromptTransformer` to include `/upload/<file>` workspace path bridging for uploaded files.
 - Added a first-pass `GenerationHandler` tool-output truncation/persistence path that writes oversized shell output to `/tool_outputs/<toolCallId>.txt` when shell access exists.
+- Completed the planned feature-side parity pass for the terminal workspace ecosystem; remaining work is external build/runtime validation.
+- Investigated whether source `syncManagedFiles()` needed a LastChat equivalent, and deliberately rejected startup auto-orphan deletion after confirming it could race with unsent draft attachment restoration in `ChatInputState`.

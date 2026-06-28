@@ -978,66 +978,12 @@ class StorageManagerRepository(
         val referencedFilePaths = buildReferencedFilePathSet(settings = settings)
         val referencedSkillIds = settings.skills.map { it.id.toString() }.toSet()
 
-        var deletedCount = 0
-        var failedCount = 0
-        var deletedBytes = 0L
-
-        fun deleteFile(file: File) {
-            val bytes = file.lengthSafe()
-            val ok = runCatching { file.delete() }.getOrNull() == true
-            if (ok) {
-                deletedCount += 1
-                deletedBytes += bytes
-            } else {
-                failedCount += 1
-            }
-        }
-
-        val roots = listOf(
-            File(context.filesDir, "upload"),
-            File(context.filesDir, "images"),
-            File(context.filesDir, "avatars"),
-            File(context.filesDir, "custom_icons"),
-        )
-        roots.forEach { root ->
-            if (!root.exists()) return@forEach
-            root.walkTopDown()
-                .filter { it.isFile }
-                .forEach { file ->
-                    val normalized = StorageScanUtils.normalizePath(file)
-                    if (normalized !in referencedFilePaths) {
-                        deleteFile(file)
-                    }
-                }
-        }
-
-        val skillsDir = File(context.filesDir, "skills")
-        if (skillsDir.exists()) {
-            skillsDir.listFiles()
-                ?.filter { it.isDirectory }
-                ?.forEach { dir ->
-                    val isUuidFolder = runCatching { Uuid.parse(dir.name) }.isSuccess
-                    if (!isUuidFolder) return@forEach
-                    if (dir.name in referencedSkillIds) return@forEach
-
-                    val usage = countDirUsage(dir)
-                    val ok = runCatching { dir.deleteRecursively() }.getOrNull() == true
-                    if (ok) {
-                        deletedCount += usage.count
-                        deletedBytes += usage.bytes
-                    } else {
-                        failedCount += 1
-                    }
-                }
-        }
-
-        val result = DeleteResult(
-            deletedCount = deletedCount,
-            failedCount = failedCount,
-            deletedBytes = deletedBytes,
+        val result = deleteUnreferencedManagedFiles(
+            referencedFilePaths = referencedFilePaths,
+            referencedSkillIds = referencedSkillIds,
         )
         invalidateOverviewCache()
-        result
+        return@withContext result
     }
 
     suspend fun clearCache(): DeleteResult = withContext(Dispatchers.IO) {
@@ -1234,6 +1180,70 @@ class StorageManagerRepository(
     }
 
     private fun File.lengthSafe(): Long = runCatching { length() }.getOrNull() ?: 0L
+
+    private fun deleteUnreferencedManagedFiles(
+        referencedFilePaths: Set<String>,
+        referencedSkillIds: Set<String>,
+    ): DeleteResult {
+        var deletedCount = 0
+        var failedCount = 0
+        var deletedBytes = 0L
+
+        fun deleteFile(file: File) {
+            val bytes = file.lengthSafe()
+            val ok = runCatching { file.delete() }.getOrNull() == true
+            if (ok) {
+                deletedCount += 1
+                deletedBytes += bytes
+            } else {
+                failedCount += 1
+            }
+        }
+
+        val roots = listOf(
+            File(context.filesDir, "upload"),
+            File(context.filesDir, "images"),
+            File(context.filesDir, "avatars"),
+            File(context.filesDir, "custom_icons"),
+        )
+        roots.forEach { root ->
+            if (!root.exists()) return@forEach
+            root.walkTopDown()
+                .filter { it.isFile }
+                .forEach { file ->
+                    val normalized = StorageScanUtils.normalizePath(file)
+                    if (normalized !in referencedFilePaths) {
+                        deleteFile(file)
+                    }
+                }
+        }
+
+        val skillsDir = File(context.filesDir, "skills")
+        if (skillsDir.exists()) {
+            skillsDir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.forEach { dir ->
+                    val isUuidFolder = runCatching { Uuid.parse(dir.name) }.isSuccess
+                    if (!isUuidFolder) return@forEach
+                    if (dir.name in referencedSkillIds) return@forEach
+
+                    val usage = countDirUsage(dir)
+                    val ok = runCatching { dir.deleteRecursively() }.getOrNull() == true
+                    if (ok) {
+                        deletedCount += usage.count
+                        deletedBytes += usage.bytes
+                    } else {
+                        failedCount += 1
+                    }
+                }
+        }
+
+        return DeleteResult(
+            deletedCount = deletedCount,
+            failedCount = failedCount,
+            deletedBytes = deletedBytes,
+        )
+    }
 
     private fun deleteFiles(files: List<File>): DeleteResult {
         var deletedCount = 0

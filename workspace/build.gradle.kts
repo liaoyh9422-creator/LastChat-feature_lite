@@ -2,12 +2,12 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
 }
-
 android {
     namespace = "me.rerere.workspace"
     compileSdk {
-        version = release(37)
+        version = release(36)
     }
+
 
     defaultConfig {
         minSdk = 26

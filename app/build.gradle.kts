@@ -206,6 +206,10 @@ android {
         resources {
             excludes += "org/fusesource/jansi/**"
         }
+        jniLibs {
+            useLegacyPackaging = true
+            pickFirsts += "lib/*/libtermux.so"
+        }
     }
     applicationVariants.all {
 
@@ -261,6 +265,8 @@ dependencies {
     implementation(libs.androidx.browser)
     implementation(libs.androidx.profileinstaller)
     implementation(libs.androidx.documentfile)
+    implementation(libs.termux.terminal.view)
+    implementation(libs.guava.listenablefuture)
 
     // Compose
     implementation(libs.androidx.activity.compose)
@@ -356,6 +362,7 @@ dependencies {
 
     // lucide icons
     implementation(libs.lucide.icons)
+    implementation(libs.huge.icons)
 
     // image viewer
     implementation(libs.image.viewer)
@@ -376,6 +383,7 @@ dependencies {
     implementation(project(":search"))
     implementation(project(":tts"))
     implementation(project(":common"))
+    implementation(project(":workspace"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(kotlin("reflect"))
 

@@ -361,6 +361,14 @@
     <string name="workspace_cwd_no_subdirectories">没有子目录</string>
     <string name="workspace_cwd_reset">重置</string>
     <string name="workspace_cwd_set">设为 CWD</string>
+    <string name="common_confirm">确定</string>
+    <string name="common_install">安装</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_save">保存</string>
+    <string name="common_delete">删除</string>
+    <string name="common_rename">重命名</string>
+    <string name="common_export">导出</string>
+    <string name="common_share">分享</string>
 
     <string name="python_wheels_online_fetch_title">在线获取依赖</string>
     <string name="python_wheels_online_fetch_description">浏览 Chaquopy PyPI 并下载 .whl</string>

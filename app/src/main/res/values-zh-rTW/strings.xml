@@ -956,6 +956,14 @@
   <string name="workspace_cwd_no_subdirectories">沒有子目錄</string>
   <string name="workspace_cwd_reset">重置</string>
   <string name="workspace_cwd_set">設為 CWD</string>
+  <string name="common_confirm">確定</string>
+  <string name="common_install">安裝</string>
+  <string name="common_cancel">取消</string>
+  <string name="common_save">儲存</string>
+  <string name="common_delete">刪除</string>
+  <string name="common_rename">重新命名</string>
+  <string name="common_export">匯出</string>
+  <string name="common_share">分享</string>
 
   <string name="setting_provider_page_api_base_url">API Base Url</string>
   <string name="setting_provider_page_api_key">API Key</string>

@@ -16,6 +16,17 @@ import androidx.compose.ui.unit.sp
 import me.rerere.rikkahub.R
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalTextApi::class)
+val JetbrainsMono = FontFamily(
+    Font(
+        resId = R.font.jetbrains_mono,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.Normal.weight),
+        )
+    )
+)
+
+
 /**
  * Material 3 Expressive Typography using Google Sans Flex variable font.
  * 
@@ -306,6 +317,21 @@ fun createTypography(fontFamily: FontFamily): Typography = Typography(
 
 // Default Typography uses M3 Expressive (rounded)
 val Typography = createTypography(GoogleSansFlexExpressive)
+
+val androidx.compose.material3.Typography.titleSmallEmphasized: TextStyle
+    get() = titleSmall.copy(fontWeight = FontWeight.Bold)
+
+val androidx.compose.material3.Typography.titleMediumEmphasized: TextStyle
+    get() = titleMedium.copy(fontWeight = FontWeight.Bold)
+
+val androidx.compose.material3.Typography.labelLargeEmphasized: TextStyle
+    get() = labelLarge.copy(fontWeight = FontWeight.Bold)
+
+val androidx.compose.material3.Typography.bodySmallEmphasized: TextStyle
+    get() = bodySmall.copy(fontWeight = FontWeight.Bold)
+
+val androidx.compose.material3.Typography.labelMediumEmphasized: TextStyle
+    get() = labelMedium.copy(fontWeight = FontWeight.Bold)
 
 // Normal Typography (non-expressive)
 val TypographyNormal = createTypography(GoogleSansFlexNormal)

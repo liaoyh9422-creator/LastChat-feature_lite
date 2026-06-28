@@ -21,6 +21,7 @@ import kotlinx.serialization.Serializable
 
 import me.rerere.rikkahub.ui.hooks.rememberColorMode
 import me.rerere.rikkahub.ui.hooks.rememberUserSettingsState
+import androidx.compose.foundation.LocalOverscrollFactory
 
 private val ExtendLightColors = lightExtendColors()
 private val ExtendDarkColors = darkExtendColors()
@@ -39,11 +40,11 @@ enum class ColorMode {
 
 @Composable
 fun RikkahubTheme(
+    colorMode: ColorMode = rememberColorMode().value,
     content: @Composable () -> Unit
 ) {
     val settings by rememberUserSettingsState()
 
-    val colorMode by rememberColorMode()
     val darkTheme = when (colorMode) {
         ColorMode.SYSTEM -> isSystemInDarkTheme()
         ColorMode.LIGHT -> false
@@ -89,7 +90,8 @@ fun RikkahubTheme(
 
     CompositionLocalProvider(
         LocalDarkMode provides darkTheme,
-        LocalExtendColors provides extendColors
+        LocalExtendColors provides extendColors,
+        LocalOverscrollFactory provides null
     ) {
         // Create typography from font settings
         val fontSettings = me.rerere.rikkahub.ui.hooks.rememberFontSettings()

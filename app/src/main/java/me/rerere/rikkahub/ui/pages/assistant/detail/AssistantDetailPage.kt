@@ -95,6 +95,7 @@ fun AssistantDetailPage(
     val memoryStats by vm.memoryStats.collectAsStateWithLifecycle()
     val providers by vm.providers.collectAsStateWithLifecycle()
     val tags by vm.tags.collectAsStateWithLifecycle()
+    val workspaces by vm.workspaces.collectAsStateWithLifecycle()
     val snackbarMessage by vm.snackbarMessage.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -193,6 +194,7 @@ fun AssistantDetailPage(
                 AssistantProfileSubPage(
                     assistant = assistant,
                     tags = tags,
+                    workspaces = workspaces,
                     onUpdate = { onUpdate(it) },
                     vm = vm
                 )

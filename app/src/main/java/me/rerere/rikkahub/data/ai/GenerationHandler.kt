@@ -233,6 +233,7 @@ class GenerationHandler(
         maxSteps: Int = 256,
         enabledModeIds: Set<Uuid> = emptySet(),
         explicitSkillContextIds: Set<Uuid> = emptySet(),
+        workspaceCwd: String? = null,
         source: AIRequestSource = AIRequestSource.OTHER,
         toolApprovalHandler: ToolApprovalHandler? = null,
         askUserHandler: AskUserHandler? = null,
@@ -291,7 +292,11 @@ class GenerationHandler(
                         transformers = outputTransformers,
                         context = context,
                         model = model,
-                        assistant = assistant
+                        assistant = assistant,
+                        settings = settings,
+                        conversationModeInjectionIds = enabledModeIds,
+                        conversationLorebookIds = emptySet(),
+                        workspaceCwd = workspaceCwd,
                     )
                     emit(
                         GenerationChunk.Messages(
@@ -299,7 +304,8 @@ class GenerationHandler(
                                 transformers = outputTransformers,
                                 context = context,
                                 model = model,
-                                assistant = assistant
+                                assistant = assistant,
+                                settings = settings,
                             ),
                             finishReasons = finishReasons,
                         )
@@ -316,19 +322,22 @@ class GenerationHandler(
                 stream = assistant.streamOutput,
                 enabledModeIds = enabledModeIds,
                 explicitSkillContextIds = explicitSkillContextIds,
+                workspaceCwd = workspaceCwd,
                 source = source,
             )
             messages = messages.visualTransforms(
                 transformers = outputTransformers,
                 context = context,
                 model = model,
-                assistant = assistant
+                assistant = assistant,
+                settings = settings,
             )
             messages = messages.onGenerationFinish(
                 transformers = outputTransformers,
                 context = context,
                 model = model,
-                assistant = assistant
+                assistant = assistant,
+                settings = settings,
             )
             emit(GenerationChunk.Messages(messages))
 
@@ -1414,6 +1423,7 @@ class GenerationHandler(
         stream: Boolean,
         enabledModeIds: Set<Uuid> = emptySet(),
         explicitSkillContextIds: Set<Uuid> = emptySet(),
+        workspaceCwd: String? = null,
         source: AIRequestSource,
     ) {
         val buildResult = buildMessages(
@@ -1430,7 +1440,16 @@ class GenerationHandler(
             explicitSkillContextIds = explicitSkillContextIds,
         )
         val internalMessages = buildResult.messages
-            .transforms(transformers, context, model, assistant)
+            .transforms(
+                transformers = transformers,
+                context = context,
+                model = model,
+                assistant = assistant,
+                settings = settings,
+                conversationModeInjectionIds = enabledModeIds,
+                conversationLorebookIds = emptySet(),
+                workspaceCwd = workspaceCwd,
+            )
             .repairToolCallMessageSequence { toolCall ->
                 toolCall.requiresLocalToolResult(model)
             }

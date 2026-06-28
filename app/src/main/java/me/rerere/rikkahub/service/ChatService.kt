@@ -102,6 +102,7 @@ import me.rerere.rikkahub.data.ai.tools.SearchAgentTools
 import me.rerere.rikkahub.data.ai.tools.SkillScriptRunner
 import me.rerere.rikkahub.data.ai.tools.WORKSPACE_COMMON_RULES_PROMPT
 import me.rerere.rikkahub.data.ai.tools.WORKSPACE_COMMON_RULES_VARIABLE
+import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
 import me.rerere.rikkahub.data.ai.tools.renderToolSystemPromptTemplate
 import me.rerere.rikkahub.data.ai.tools.workspaceToolSystemPromptTemplate
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
@@ -111,6 +112,8 @@ import me.rerere.rikkahub.data.ai.transformers.PlaceholderTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
+import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.datastore.KeepAliveMode
 import me.rerere.rikkahub.data.datastore.ConversationWorkDirBinding
 import me.rerere.rikkahub.data.datastore.ConversationWorkDirMode
@@ -153,6 +156,7 @@ import me.rerere.rikkahub.utils.deleteChatFiles
 import me.rerere.rikkahub.utils.jsonPrimitiveOrNull
 import me.rerere.search.SearchService
 import me.rerere.search.SearchServiceOptions
+import me.rerere.workspace.WorkspaceShellStatus
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
@@ -216,7 +220,9 @@ class ChatService(
     val mcpManager: McpManager,
     private val modelQuotaRepo: ModelQuotaRepository,
     val searchAgentProgressStore: SearchAgentProgressStore,
+    private val workspaceRepository: WorkspaceRepository,
 ) {
+    private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
     // 存储每个对话的状态
     private val conversations = ConcurrentHashMap<Uuid, MutableStateFlow<Conversation>>()
 
@@ -1912,6 +1918,7 @@ class ChatService(
                     continueRequestTransformer?.let(::add)
                     addAll(inputTransformers)
                     add(templateTransformer)
+                    add(workspaceReminderTransformer)
                 },
                 outputTransformers = outputTransformers,
                 sessionMemories = if (assistant.enableSessionMemory) conversation.sessionMemories else emptyList(),
@@ -1984,17 +1991,24 @@ class ChatService(
                         )
                     }
                     val hasWorkspaceFiles = assistant.localTools.contains(LocalToolOption.WorkspaceFiles)
+                    val hasBoundWorkspace = assistant.workspaceId != null
                     if (hasWorkspaceFiles) {
-                        addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                        if (hasBoundWorkspace) {
+                            addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
+                        } else {
+                            addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                        }
                     }
                     if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
-                        add(
-                            createWorkspacePythonTool(
-                                conversationId = conversation.id,
-                                settingsSnapshot = settings,
-                                includeCommonRules = !hasWorkspaceFiles,
+                        if (!hasBoundWorkspace) {
+                            add(
+                                createWorkspacePythonTool(
+                                    conversationId = conversation.id,
+                                    settingsSnapshot = settings,
+                                    includeCommonRules = !hasWorkspaceFiles,
+                                )
                             )
-                        )
+                        }
                     }
 
                     val enabledSkills = settings.skills.filter { skill -> skill.id in assistant.enabledSkillIds }
@@ -2029,6 +2043,7 @@ class ChatService(
                 truncateIndex = conversation.truncateIndex,
                 enabledModeIds = conversation.enabledModeIds,
                 explicitSkillContextIds = conversation.explicitSkillContextIds,
+                workspaceCwd = conversation.workspaceCwd,
                 source = AIRequestSource.CHAT,
                 toolApprovalHandler = ToolApprovalHandler { request -> awaitToolApproval(request) },
                 askUserHandler = AskUserHandler { request -> awaitAskUserResponse(request.conversationId, request.toolCallId) },
@@ -2401,6 +2416,7 @@ class ChatService(
                 }
                 addAll(inputTransformers)
                 add(templateTransformer)
+                add(workspaceReminderTransformer)
             }
 
             val promptMessages = buildGroupChatPromptMessagesForSeat(
@@ -2448,8 +2464,13 @@ class ChatService(
                 }
 
                 val hasWorkspaceFiles = seatAssistant.localTools.contains(LocalToolOption.WorkspaceFiles)
+                val hasBoundWorkspace = seatAssistant.workspaceId != null
                 if (hasWorkspaceFiles) {
-                    addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                    if (hasBoundWorkspace) {
+                        addAll(createWorkspaceToolsIfReady(seatAssistant.workspaceId?.toString(), conversation.workspaceCwd))
+                    } else {
+                        addAll(createWorkspaceFileTools(conversationId = conversation.id, settingsSnapshot = settings))
+                    }
                 }
                 if (seatAssistant.localTools.contains(LocalToolOption.MemorySearch)) {
                     addAll(
@@ -2469,13 +2490,15 @@ class ChatService(
                     )
                 }
                 if (seatAssistant.localTools.contains(LocalToolOption.PythonEngine)) {
-                    add(
-                        createWorkspacePythonTool(
-                            conversationId = conversation.id,
-                            settingsSnapshot = settings,
-                            includeCommonRules = !hasWorkspaceFiles,
+                    if (!hasBoundWorkspace) {
+                        add(
+                            createWorkspacePythonTool(
+                                conversationId = conversation.id,
+                                settingsSnapshot = settings,
+                                includeCommonRules = !hasWorkspaceFiles,
+                            )
                         )
-                    )
+                    }
                 }
 
                 val enabledSkills = settings.skills.filter { skill -> skill.id in seatAssistant.enabledSkillIds }
@@ -2624,6 +2647,7 @@ class ChatService(
                 truncateIndex = conversation.truncateIndex,
                 enabledModeIds = conversation.enabledModeIds,
                 explicitSkillContextIds = conversation.explicitSkillContextIds,
+                workspaceCwd = conversation.workspaceCwd,
                 maxSteps = seatMaxSteps,
                 source = AIRequestSource.CHAT,
                 toolApprovalHandler = ToolApprovalHandler { request -> awaitToolApproval(request) },
@@ -5135,6 +5159,19 @@ class ChatService(
                     ))
             }
         }
+    }
+
+        private suspend fun createWorkspaceToolsIfReady(workspaceId: String?, cwd: String? = null): List<Tool> {
+        if (workspaceId.isNullOrBlank()) return emptyList()
+        val workspace = workspaceRepository.getById(workspaceId) ?: return emptyList()
+        if (workspace.shellStatus != WorkspaceShellStatus.READY.name) {
+            Log.d(
+                TAG,
+                "createWorkspaceToolsIfReady: skip workspace tools, workspace=$workspaceId, status=${workspace.shellStatus}"
+            )
+            return emptyList()
+        }
+        return createWorkspaceTools(workspaceId, workspaceRepository, cwd)
     }
 
     // 检查无效消息

@@ -244,9 +244,17 @@ class WorkspaceRepository(
     }
 
     private suspend fun cleanupAssistantReferences(workspaceId: String) {
-        // TODO: current LastChat-feature_lite Assistant model has no workspaceId yet.
-        // Keep settings update touchpoint for future full workspace migration.
-        settingsStore.update { settings -> settings }
+        settingsStore.update { settings ->
+            settings.copy(
+                assistants = settings.assistants.map { assistant ->
+                    if (assistant.workspaceId?.toString() == workspaceId) {
+                        assistant.copy(workspaceId = null)
+                    } else {
+                        assistant
+                    }
+                }
+            )
+        }
     }
 
     private suspend fun restoreShellState(workspace: WorkspaceEntity) {

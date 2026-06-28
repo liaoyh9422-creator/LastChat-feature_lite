@@ -134,6 +134,9 @@
     <string name="assistant_page_group_appearance">Appearance</string>
     <string name="assistant_page_group_identity">Identity</string>
     <string name="assistant_page_group_models">Models</string>
+    <string name="assistant_page_workspace">Workspace</string>
+    <string name="assistant_page_workspace_desc">Bind a persistent Linux workspace to this assistant</string>
+    <string name="workspace_no_binding">No binding</string>
     <string name="assistant_page_group_generation">Generation</string>
     <string name="assistant_page_group_output">Output</string>
     <string name="assistant_deleted">Assistant %s deleted</string>

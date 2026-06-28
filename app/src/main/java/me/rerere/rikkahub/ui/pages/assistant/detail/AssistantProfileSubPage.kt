@@ -19,12 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.ui.components.ui.DebouncedTextField
+import me.rerere.rikkahub.ui.components.ui.Select
 import me.rerere.rikkahub.ui.components.ui.TagsInput
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.pages.setting.components.SettingsGroup
 import me.rerere.rikkahub.ui.pages.setting.components.SettingGroupItem
+import kotlin.uuid.Uuid
 import me.rerere.rikkahub.data.model.Tag as DataTag
 
 /**
@@ -35,6 +38,7 @@ import me.rerere.rikkahub.data.model.Tag as DataTag
 fun AssistantProfileSubPage(
     assistant: Assistant,
     tags: List<DataTag>,
+    workspaces: List<WorkspaceEntity>,
     onUpdate: (Assistant) -> Unit,
     vm: AssistantDetailVM
 ) {
@@ -89,13 +93,12 @@ fun AssistantProfileSubPage(
                     )
                 }
             )
-            
             // Tags - vertical layout to prevent height growth
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = if (me.rerere.rikkahub.ui.theme.LocalDarkMode.current) 
-                    MaterialTheme.colorScheme.surfaceContainerLow 
-                else 
+                color = if (me.rerere.rikkahub.ui.theme.LocalDarkMode.current)
+                    MaterialTheme.colorScheme.surfaceContainerLow
+                else
                     MaterialTheme.colorScheme.surfaceContainerHigh,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
             ) {
@@ -122,7 +125,49 @@ fun AssistantProfileSubPage(
                     )
                 }
             }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = if (me.rerere.rikkahub.ui.theme.LocalDarkMode.current)
+                    MaterialTheme.colorScheme.surfaceContainerLow
+                else
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.assistant_page_workspace),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.assistant_page_workspace_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val selectedWorkspace = workspaces.find { it.id == assistant.workspaceId?.toString() }
+                    Select(
+                        options = listOf<WorkspaceEntity?>(null) + workspaces,
+                        selectedOption = selectedWorkspace,
+                        onOptionSelected = { workspace ->
+                            onUpdate(
+                                assistant.copy(
+                                    workspaceId = workspace?.id?.let { Uuid.parse(it) }
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        optionToString = { workspace ->
+                            workspace?.name ?: stringResource(R.string.workspace_no_binding)
+                        },
+                    )
+                }
+            }
         }
+
 
         // ═══════════════════════════════════════════════════════════════════
         // APPEARANCE GROUP

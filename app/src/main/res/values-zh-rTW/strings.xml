@@ -1163,6 +1163,9 @@
   <!-- 自動補齊（來源：values-zh） -->
   <string name="assistant_page_group_appearance">外觀</string>
   <string name="assistant_page_group_identity">身份</string>
+  <string name="assistant_page_workspace">工作區</string>
+  <string name="assistant_page_workspace_desc">為這個助手綁定一個持久 Linux 工作區</string>
+  <string name="workspace_no_binding">不綁定</string>
   <string name="assistant_page_name_desc">在聊天和提示詞中顯示</string>
   <string name="assistant_page_tags_desc">用標籤來整理和查找助手</string>
   <string name="assistant_page_tap_to_change_avatar">點按更換頭像</string>

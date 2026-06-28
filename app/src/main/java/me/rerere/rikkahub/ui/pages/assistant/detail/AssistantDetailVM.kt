@@ -21,12 +21,14 @@ import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.dao.ChatEpisodeDAO
+import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Tag
 import me.rerere.rikkahub.data.repository.AssistantMemoryStats
 import me.rerere.rikkahub.data.repository.MemoryRepository
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.deleteChatFiles
 import kotlin.uuid.Uuid
 
@@ -42,6 +44,7 @@ class AssistantDetailVM(
     private val context: Application,
     private val chatEpisodeDAO: ChatEpisodeDAO,
     private val providerManager: me.rerere.ai.provider.ProviderManager,
+    private val workspaceRepository: WorkspaceRepository,
 ) : ViewModel() {
     private val assistantId = Uuid.parse(id)
 
@@ -136,6 +139,14 @@ class AssistantDetailVM(
             settings.assistantTags
         }.stateIn(
             scope = viewModelScope, started = SharingStarted.Lazily, initialValue = emptyList()
+        )
+
+    val workspaces: StateFlow<List<WorkspaceEntity>> = workspaceRepository
+        .listFlow()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList(),
         )
 
     fun updateTags(tagIds: List<Uuid>, tags: List<Tag>) {

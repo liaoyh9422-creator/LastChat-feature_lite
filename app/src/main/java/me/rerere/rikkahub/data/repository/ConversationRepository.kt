@@ -361,6 +361,7 @@ class ConversationRepository(
             lastRefreshTime = conversation.lastRefreshTime,
             contextSummaryBoundaries = JsonInstant.encodeToString(normalizedSummaryBoundaries),
             sessionMemories = JsonInstant.encodeToString(conversation.sessionMemories),
+            workspaceCwd = conversation.workspaceCwd.orEmpty(),
         )
     }
 
@@ -408,6 +409,7 @@ class ConversationRepository(
             lastRefreshTime = conversationEntity.lastRefreshTime,
             contextSummaryBoundaries = summaryBoundaries,
             sessionMemories = sessionMemories,
+            workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
             loadedNodeStartIndex = decodedWindow.startIndex,
             totalMessageNodeCount = decodedWindow.totalCount,
         )

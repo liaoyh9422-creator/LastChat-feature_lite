@@ -54,6 +54,9 @@
   <string name="assistant_page_default_assistant">默认助手</string>
   <string name="assistant_page_group_appearance">外观</string>
   <string name="assistant_page_group_identity">身份</string>
+    <string name="assistant_page_workspace">工作区</string>
+    <string name="assistant_page_workspace_desc">为这个助手绑定一个持久 Linux 工作区</string>
+    <string name="workspace_no_binding">不绑定</string>
   <string name="assistant_page_delete">删除</string>
   <string name="assistant_page_delete_body">删除 Body</string>
   <string name="assistant_page_delete_dialog_text">确定要删除这个助手吗？此操作无法撤销。</string>

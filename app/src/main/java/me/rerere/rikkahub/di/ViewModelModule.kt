@@ -53,6 +53,7 @@ val viewModelModule = module {
             context = get(),
             chatEpisodeDAO = get(),
             providerManager = get(),
+            workspaceRepository = get(),
         )
     }
     viewModelOf(::TranslatorVM)

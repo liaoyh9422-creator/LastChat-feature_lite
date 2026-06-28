@@ -95,6 +95,7 @@ data class Conversation(
     val contextSummaryBoundaries: List<Int> = emptyList(), // History of summary boundary indices
     val contextSummaryPendingBoundaryIndex: Int = -1, // In-memory marker for active context compression divider
     val sessionMemories: List<SessionMemory> = emptyList(), // Memories that only apply to this conversation
+    val workspaceCwd: String? = null,
     val loadedNodeStartIndex: Int = 0, // Absolute start index of currently loaded node window
     val totalMessageNodeCount: Int = 0, // Total node count stored in DB for this conversation
 ) {

@@ -946,6 +946,16 @@
   <string name="workspace_terminal_not_installed">Rootfs 尚未安裝</string>
   <string name="workspace_terminal_loading">輸入指令以在此工作區中執行。</string>
   <string name="workspace_terminal_exited">程序已退出</string>
+  <string name="assistant_page_workspace_unbound">未綁定</string>
+  <string name="workspace_select">選擇工作區</string>
+  <string name="workspace_manage">管理工作區</string>
+  <string name="workspace_detail">工作區詳情</string>
+  <string name="workspace_terminal">工作區終端</string>
+  <string name="workspace_cwd_select_directory">選擇工作目錄</string>
+  <string name="workspace_cwd_select_desc">為當前會話設定工作目錄</string>
+  <string name="workspace_cwd_no_subdirectories">沒有子目錄</string>
+  <string name="workspace_cwd_reset">重置</string>
+  <string name="workspace_cwd_set">設為 CWD</string>
 
   <string name="setting_provider_page_api_base_url">API Base Url</string>
   <string name="setting_provider_page_api_key">API Key</string>

@@ -2106,6 +2106,16 @@
     <string name="workspace_terminal_not_installed">Rootfs is not installed yet</string>
     <string name="workspace_terminal_loading">Enter a command to execute inside this workspace.</string>
     <string name="workspace_terminal_exited">Process exited</string>
+    <string name="assistant_page_workspace_unbound">Not bound</string>
+    <string name="workspace_select">Select workspace</string>
+    <string name="workspace_manage">Manage workspaces</string>
+    <string name="workspace_detail">Workspace details</string>
+    <string name="workspace_terminal">Workspace terminal</string>
+    <string name="workspace_cwd_select_directory">Select working directory</string>
+    <string name="workspace_cwd_select_desc">Set the working directory for the current session</string>
+    <string name="workspace_cwd_no_subdirectories">No subdirectories</string>
+    <string name="workspace_cwd_reset">Reset</string>
+    <string name="workspace_cwd_set">Set as CWD</string>
 
     <string name="menu_statistics_title">Statistics</string>
     <string name="menu_stat_daily_streak">Daily Streak</string>

@@ -165,6 +165,8 @@
     <string name="chat_page_export_conversation_json_success">会话 JSON 已准备好分享</string>
     <string name="chat_page_export_conversation_json_failed">导出会话 JSON 失败：%1$s</string>
     <string name="chat_page_export_conversation_json_not_found">未找到该会话，可能已被删除</string>
+    <string name="chat_page_clear_conversation_tool_approval_policies">清除本会话已记住的审批</string>
+    <string name="chat_page_clear_conversation_tool_approval_policies_done">已清除本会话已记住的审批</string>
 
     <string name="setting_display_page_embedding_retrieval_timeout_title">嵌入模型检索超时时间</string>
     <string name="setting_display_page_embedding_retrieval_timeout_desc">超时后将跳过该次检索，单位：秒</string>

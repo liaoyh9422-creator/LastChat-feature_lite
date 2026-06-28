@@ -334,6 +334,8 @@
   <string name="chat_page_export_conversation_json_success">会话 JSON 已准备好分享</string>
   <string name="chat_page_export_conversation_json_failed">导出会话 JSON 失败：%1$s</string>
   <string name="chat_page_export_conversation_json_not_found">未找到该会话，可能已被删除</string>
+  <string name="chat_page_clear_conversation_tool_approval_policies">清除本会话已记住的审批</string>
+  <string name="chat_page_clear_conversation_tool_approval_policies_done">已清除本会话已记住的审批</string>
   <string name="chat_page_history">聊天历史</string>
   <string name="chat_page_learning_mode">学习模式</string>
   <string name="chat_page_learning_mode_desc">帮助你循序渐进地学习知识</string>

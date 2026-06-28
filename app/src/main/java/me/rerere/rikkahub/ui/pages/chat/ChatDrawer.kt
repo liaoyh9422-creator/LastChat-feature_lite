@@ -314,6 +314,13 @@ fun ChatDrawerContent(
                 onExportConversationJson = { conversation ->
                     exportConversationJson(conversation)
                 },
+                onClearConversationToolApprovalPolicies = { conversation ->
+                    vm.clearConversationToolApprovalPolicies(conversation.id)
+                    toaster.show(
+                        message = context.getString(R.string.chat_page_clear_conversation_tool_approval_policies_done),
+                        type = ToastType.Success,
+                    )
+                },
                 showUnconsolidatedDot = canConsolidate,
                 showConsolidateOption = canConsolidate,
                 showExportConversationJsonButton = settings.displaySetting.showExportConversationJsonButton,

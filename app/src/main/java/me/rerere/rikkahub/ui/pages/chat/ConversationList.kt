@@ -121,6 +121,7 @@ fun ColumnScope.ConversationList(
     onPin: (Conversation) -> Unit = {},
     onManageWorkDir: (Conversation) -> Unit = {},
     onExportConversationJson: (Conversation) -> Unit = {},
+    onClearConversationToolApprovalPolicies: (Conversation) -> Unit = {},
     showUnconsolidatedDot: Boolean = false,
     showConsolidateOption: Boolean = false,
     showExportConversationJsonButton: Boolean = false,
@@ -396,6 +397,7 @@ fun ColumnScope.ConversationList(
                             onPin = onPin,
                             onManageWorkDir = onManageWorkDir,
                             onExportConversationJson = onExportConversationJson,
+                            onClearConversationToolApprovalPolicies = onClearConversationToolApprovalPolicies,
                             showUnconsolidatedDot = showUnconsolidatedDot,
                             showConsolidateOption = showConsolidateOption,
                             showExportConversationJsonButton = showExportConversationJsonButton,
@@ -538,6 +540,7 @@ private fun ConversationItem(
     onPin: (Conversation) -> Unit = {},
     onManageWorkDir: (Conversation) -> Unit = {},
     onExportConversationJson: (Conversation) -> Unit = {},
+    onClearConversationToolApprovalPolicies: (Conversation) -> Unit = {},
     showUnconsolidatedDot: Boolean = false,
     showConsolidateOption: Boolean = false,
     showExportConversationJsonButton: Boolean = false,
@@ -725,6 +728,20 @@ private fun ConversationItem(
                         }
                     )
                 }
+
+                DropdownMenuItem(
+                    text = {
+                        Text(stringResource(id = R.string.chat_page_clear_conversation_tool_approval_policies))
+                    },
+                    onClick = {
+                        haptics.perform(HapticPattern.Pop)
+                        onClearConversationToolApprovalPolicies(conversation)
+                        showDropdownMenu = false
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.Close, null)
+                    }
+                )
 
                 if (showConsolidateOption && !conversation.isConsolidated) {
                     DropdownMenuItem(

@@ -363,7 +363,6 @@ class ChatVM(
             scope = scope,
         )
     }
-
     fun respondAskUser(toolCallId: String, answer: String) {
         chatService.respondAskUser(
             conversationId = _conversationId,
@@ -371,6 +370,11 @@ class ChatVM(
             answer = answer,
         )
     }
+
+    fun clearConversationToolApprovalPolicies(conversationId: Uuid) {
+        chatService.clearConversationToolApprovalPolicies(conversationId)
+    }
+
 
     fun handleMessageSend(
         content: List<UIMessagePart>,

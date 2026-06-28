@@ -488,6 +488,8 @@
     <string name="chat_page_export_conversation_json_success">Conversation JSON is ready to share</string>
     <string name="chat_page_export_conversation_json_failed">Failed to export conversation JSON: %1$s</string>
     <string name="chat_page_export_conversation_json_not_found">Conversation does not exist or was deleted</string>
+    <string name="chat_page_clear_conversation_tool_approval_policies">Clear remembered approvals for this chat</string>
+    <string name="chat_page_clear_conversation_tool_approval_policies_done">Cleared remembered approvals for this chat</string>
     <string name="chat_page_history">History</string>
     <string name="chat_page_learning_mode">Learning Mode</string>
     <string name="chat_page_learning_mode_desc">Learn step by step</string>

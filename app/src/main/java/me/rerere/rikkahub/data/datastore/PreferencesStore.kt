@@ -32,7 +32,9 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.normalizeProviderApiKeys
 import me.rerere.ai.provider.syncEnabledApiKeysToLegacyField
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.ai.ToolApprovalStoredDecision
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
+
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LEARNING_MODE_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_MODEL_NAME_GENERATION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
@@ -256,8 +258,9 @@ class SettingsStore(
         val SKILL_FOLDERS = stringPreferencesKey("skill_folders")
         val ENABLE_SKILL_SCRIPT_EXECUTION = booleanPreferencesKey("enable_skill_script_execution")
         val ENABLED_SKILL_SCRIPT_IDS = stringPreferencesKey("enabled_skill_script_ids")
-        val WORKSPACE_FILE_TOOLS_ALLOW_ALL = booleanPreferencesKey("workspace_file_tools_allow_all")
-        val WORKSPACE_ROOT_TREE_URI = stringPreferencesKey("workspace_root_tree_uri")
+    val WORKSPACE_FILE_TOOLS_ALLOW_ALL = booleanPreferencesKey("workspace_file_tools_allow_all")
+    val TOOL_APPROVAL_PERSISTENT_POLICIES = stringPreferencesKey("tool_approval_persistent_policies")
+    val WORKSPACE_ROOT_TREE_URI = stringPreferencesKey("workspace_root_tree_uri")
         val CONVERSATION_WORKSPACE_ROOTS = stringPreferencesKey("conversation_workspace_roots")
         val CONVERSATION_WORK_DIRS = stringPreferencesKey("conversation_work_dirs")
         val REMEMBER_LAST_WORKSPACE_FOR_NEW_CHATS =
@@ -517,6 +520,9 @@ class SettingsStore(
                     runCatching { JsonInstant.decodeFromString<Set<Uuid>>(it) }.getOrNull()
                 } ?: emptySet(),
                 workspaceFileToolsAllowAll = preferences[WORKSPACE_FILE_TOOLS_ALLOW_ALL] == true,
+                toolApprovalPersistentPolicies = preferences[TOOL_APPROVAL_PERSISTENT_POLICIES]?.let {
+                    runCatching { JsonInstant.decodeFromString<Map<String, ToolApprovalStoredDecision>>(it) }.getOrNull()
+                } ?: emptyMap(),
                 workspaceRootTreeUri = preferences[WORKSPACE_ROOT_TREE_URI],
                 conversationWorkspaceRoots = preferences[CONVERSATION_WORKSPACE_ROOTS]?.let { raw ->
                     runCatching { JsonInstant.decodeFromString<Map<String, String>>(raw) }.getOrNull()
@@ -771,6 +777,7 @@ class SettingsStore(
             preferences[ENABLE_SKILL_SCRIPT_EXECUTION] = finalSettingsToSave.enableSkillScriptExecution
             preferences[ENABLED_SKILL_SCRIPT_IDS] = JsonInstant.encodeToString(finalSettingsToSave.enabledSkillScriptIds)
             preferences[WORKSPACE_FILE_TOOLS_ALLOW_ALL] = finalSettingsToSave.workspaceFileToolsAllowAll
+            preferences[TOOL_APPROVAL_PERSISTENT_POLICIES] = JsonInstant.encodeToString(finalSettingsToSave.toolApprovalPersistentPolicies)
             finalSettingsToSave.workspaceRootTreeUri?.let {
                 preferences[WORKSPACE_ROOT_TREE_URI] = it
             } ?: preferences.remove(WORKSPACE_ROOT_TREE_URI)
@@ -899,6 +906,7 @@ data class Settings(
     val workspaceRootTreeUri: String? = null,
     val conversationWorkspaceRoots: Map<String, String> = emptyMap(),
     val workspaceFileToolsAllowAll: Boolean = false,
+    val toolApprovalPersistentPolicies: Map<String, ToolApprovalStoredDecision> = emptyMap(),
     val conversationWorkDirs: Map<String, ConversationWorkDirBinding> = emptyMap(),
     val rememberLastWorkspaceForNewChats: Boolean = false,
     val rememberedWorkspaceForNewChats: RememberedWorkspaceForNewChats? = null,

@@ -17,6 +17,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -201,6 +202,30 @@ fun SettingAdvancedPage(vm: SettingVM = koinViewModel()) {
                             vm.updateSettings { current ->
                                 if (current.httpRetryDelaySeconds == delaySeconds) current
                                 else current.copy(httpRetryDelaySeconds = delaySeconds)
+                            }
+                        }
+                    )
+                }
+            }
+
+            item {
+                SettingsGroup(
+                    title = stringResource(R.string.setting_advanced_page_tool_approval_title)
+                ) {
+                    SettingGroupItem(
+                        title = stringResource(R.string.setting_advanced_page_tool_approval_reset_title),
+                        subtitle = stringResource(R.string.setting_advanced_page_tool_approval_reset_desc),
+                        trailing = {
+                            TextButton(
+                                onClick = {
+                                    haptics.perform(HapticPattern.Pop)
+                                    vm.updateSettings { current ->
+                                        if (current.toolApprovalPersistentPolicies.isEmpty()) current
+                                        else current.copy(toolApprovalPersistentPolicies = emptyMap())
+                                    }
+                                }
+                            ) {
+                                Text(stringResource(R.string.clear))
                             }
                         }
                     )

@@ -284,8 +284,12 @@
   <string name="mcp_tool_approval_approve">批准</string>
   <string name="mcp_tool_approval_reject">拒絕</string>
   <string name="mcp_tool_approval_approved_calling">已批准，正在執行 %1$s…</string>
-  <string name="mcp_tool_approval_rejected_result">用戶拒絕本次工具調用</string>
-  <string name="ask_user_title">助手向你提問</string>
+<string name="mcp_tool_approval_rejected_result">用戶拒絕本次工具調用</string>
+    <string name="tool_approval_scope_title">本次決定套用範圍</string>
+    <string name="tool_approval_scope_once">僅這次</string>
+    <string name="tool_approval_scope_conversation">本會話</string>
+    <string name="tool_approval_scope_always">始終如此</string>
+    <string name="ask_user_title">助手向你提問</string>
   <string name="ask_user_multi_title">助手向你提出了 %d 個問題</string>
   <string name="ask_user_step_title">提問</string>
   <string name="ask_user_answer_title">回答</string>
@@ -1754,7 +1758,10 @@
   <string name="setting_display_page_embedding_retrieval_timeout_desc">逾時後將跳過該次檢索，單位：秒</string>
   <string name="setting_display_page_use_last_turn_memory_title">使用上一輪記憶</string>
   <string name="setting_display_page_use_last_turn_memory_desc">跳過記憶檢索後，使用上一輪注入的記憶</string>
-  <string name="setting_advanced_page_custom_request_title">自訂請求</string>
+  <string name="setting_advanced_page_tool_approval_title">工具審批策略</string>
+    <string name="setting_advanced_page_tool_approval_reset_title">清除已記住的工具審批</string>
+    <string name="setting_advanced_page_tool_approval_reset_desc">移除所有「始終允許 / 始終拒絕」決策，之後工具調用會重新詢問。</string>
+    <string name="setting_advanced_page_custom_request_title">自訂請求</string>
   <string name="setting_advanced_page_custom_request_json_mode_title">原始JSON編輯框</string>
   <string name="setting_advanced_page_custom_request_json_mode_desc">使用單一文字框編輯JSON，以自訂 Headers 和 Body。</string>
   <string name="setting_tool_prompts_title">自訂工具提示詞</string>

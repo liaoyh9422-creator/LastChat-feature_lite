@@ -80,6 +80,11 @@ import me.rerere.rikkahub.data.ai.AIRequestLogManager
 import me.rerere.rikkahub.data.ai.AIRequestSource
 import me.rerere.rikkahub.data.ai.ToolApprovalHandler
 import me.rerere.rikkahub.data.ai.ToolApprovalRequest
+import me.rerere.rikkahub.data.ai.ToolApprovalResponse
+import me.rerere.rikkahub.data.ai.ToolApprovalScope
+import me.rerere.rikkahub.data.ai.ToolApprovalStoredDecision
+import me.rerere.rikkahub.data.ai.toolApprovalConversationPolicyKey
+import me.rerere.rikkahub.data.ai.toolApprovalPersistentPolicyKey
 import me.rerere.rikkahub.data.ai.AskUserHandler
 import me.rerere.rikkahub.data.ai.AskUserRequest
 import me.rerere.rikkahub.data.ai.mcp.McpManager
@@ -240,8 +245,9 @@ class ChatService(
     private val skillScriptMutexes = ConcurrentHashMap<Uuid, Mutex>()
     private val olderHistoryLoadMutexes = ConcurrentHashMap<Uuid, Mutex>()
 
-    private val toolApprovalEarlyResponses = ConcurrentHashMap<String, Boolean>()
-    private val toolApprovalDeferreds = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val toolApprovalEarlyResponses = ConcurrentHashMap<String, ToolApprovalResponse>()
+    private val toolApprovalDeferreds = ConcurrentHashMap<String, CompletableDeferred<ToolApprovalResponse>>()
+    private val conversationToolApprovalPolicies = ConcurrentHashMap<String, ToolApprovalStoredDecision>()
 
     private val askUserEarlyResponses = ConcurrentHashMap<String, String>()
     private val askUserDeferreds = ConcurrentHashMap<String, CompletableDeferred<String>>()
@@ -250,29 +256,97 @@ class ChatService(
         return "${conversationId}:${toolCallId}"
     }
 
-    fun respondToolApproval(conversationId: Uuid, toolCallId: String, approved: Boolean) {
+    fun respondToolApproval(
+        conversationId: Uuid,
+        toolCallId: String,
+        approved: Boolean,
+        scope: ToolApprovalScope = ToolApprovalScope.Once,
+    ) {
         if (toolCallId.isBlank()) return
         val key = toolApprovalKey(conversationId, toolCallId)
+        val response = ToolApprovalResponse(approved = approved, scope = scope)
         val deferred = toolApprovalDeferreds[key]
         if (deferred != null) {
-            deferred.complete(approved)
+            deferred.complete(response)
         } else {
-            toolApprovalEarlyResponses[key] = approved
+            toolApprovalEarlyResponses[key] = response
         }
     }
 
-    private suspend fun awaitToolApproval(request: ToolApprovalRequest): Boolean {
-        if (request.toolCallId.isBlank()) return false
+    fun clearPersistentToolApprovalPolicies() {
+        appScope.launch {
+            settingsStore.update { current ->
+                if (current.toolApprovalPersistentPolicies.isEmpty()) current
+                else current.copy(toolApprovalPersistentPolicies = emptyMap())
+            }
+        }
+    }
+
+    fun clearConversationToolApprovalPolicies(conversationId: Uuid? = null) {
+        if (conversationId == null) {
+            conversationToolApprovalPolicies.clear()
+            return
+        }
+        val prefix = "conversation:${conversationId}:"
+        conversationToolApprovalPolicies.keys.removeAll { it.startsWith(prefix) }
+    }
+
+    private suspend fun awaitToolApproval(request: ToolApprovalRequest): ToolApprovalResponse {
+        if (request.toolCallId.isBlank()) return ToolApprovalResponse(approved = false)
+
+        val conversationKey = toolApprovalConversationPolicyKey(request.conversationId, request.toolName)
+        when (conversationToolApprovalPolicies[conversationKey]) {
+            ToolApprovalStoredDecision.Allow -> return ToolApprovalResponse(true, ToolApprovalScope.Conversation)
+            ToolApprovalStoredDecision.Deny -> return ToolApprovalResponse(false, ToolApprovalScope.Conversation)
+            else -> Unit
+        }
+
+        val settingsSnapshot = settingsStore.settingsFlow.value
+        when (settingsSnapshot.toolApprovalPersistentPolicies[toolApprovalPersistentPolicyKey(request.toolName)]) {
+            ToolApprovalStoredDecision.Allow -> return ToolApprovalResponse(true, ToolApprovalScope.Always)
+            ToolApprovalStoredDecision.Deny -> return ToolApprovalResponse(false, ToolApprovalScope.Always)
+            else -> Unit
+        }
+
         val key = toolApprovalKey(request.conversationId, request.toolCallId)
         toolApprovalEarlyResponses.remove(key)?.let { early ->
+            applyToolApprovalScope(request, early)
             return early
         }
-        val deferred = CompletableDeferred<Boolean>()
+        val deferred = CompletableDeferred<ToolApprovalResponse>()
         toolApprovalDeferreds[key] = deferred
         try {
-            return deferred.await()
+            val response = deferred.await()
+            applyToolApprovalScope(request, response)
+            return response
         } finally {
             toolApprovalDeferreds.remove(key)
+        }
+    }
+
+    private fun applyToolApprovalScope(request: ToolApprovalRequest, response: ToolApprovalResponse) {
+        when (response.scope) {
+            ToolApprovalScope.Once -> Unit
+            ToolApprovalScope.Conversation -> {
+                conversationToolApprovalPolicies[
+                    toolApprovalConversationPolicyKey(request.conversationId, request.toolName)
+                ] = if (response.approved) ToolApprovalStoredDecision.Allow else ToolApprovalStoredDecision.Deny
+            }
+            ToolApprovalScope.Always -> {
+                appScope.launch {
+                    settingsStore.update { current ->
+                        current.copy(
+                            toolApprovalPersistentPolicies = current.toolApprovalPersistentPolicies + (
+                                toolApprovalPersistentPolicyKey(request.toolName) to if (response.approved) {
+                                    ToolApprovalStoredDecision.Allow
+                                } else {
+                                    ToolApprovalStoredDecision.Deny
+                                }
+                            )
+                        )
+                    }
+                }
+            }
         }
     }
 

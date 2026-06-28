@@ -50,6 +50,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -100,6 +101,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.ui.AskUserState
 import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.rikkahub.data.ai.ToolApprovalScope
 import me.rerere.highlight.HighlightText
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
@@ -370,6 +372,7 @@ fun ToolApprovalItem(
     }
     var locked by remember(toolName, state) { mutableStateOf(false) }
     var showArgumentsSheet by remember(toolCallId) { mutableStateOf(false) }
+    var approvalScope by remember(toolCallId) { mutableStateOf(ToolApprovalScope.Once) }
     val canRespond = conversationId != null && toolCallId.isNotBlank()
 
     Card(
@@ -428,47 +431,58 @@ fun ToolApprovalItem(
 
             when (state) {
                 ToolApprovalState.Pending -> {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        ToolApprovalButton(
-                            text = stringResource(R.string.mcp_tool_approval_approve),
-                            icon = Icons.Rounded.Check,
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            enabled = !locked && canRespond,
-                            onClick = {
-                                if (locked || !canRespond) return@ToolApprovalButton
-                                locked = true
-                                haptics.perform(HapticPattern.Pop)
-                                chatService.respondToolApproval(
-                                    conversationId = conversationId ?: return@ToolApprovalButton,
-                                    toolCallId = toolCallId,
-                                    approved = true,
-                                )
-                            },
-                            modifier = Modifier.weight(1f),
+                        ApprovalScopeSelector(
+                            selected = approvalScope,
+                            onSelectedChange = { approvalScope = it },
                         )
-                        ToolApprovalButton(
-                            text = stringResource(R.string.mcp_tool_approval_reject),
-                            icon = Icons.Rounded.Close,
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                            enabled = !locked && canRespond,
-                            onClick = {
-                                if (locked || !canRespond) return@ToolApprovalButton
-                                locked = true
-                                haptics.perform(HapticPattern.Pop)
-                                chatService.respondToolApproval(
-                                    conversationId = conversationId ?: return@ToolApprovalButton,
-                                    toolCallId = toolCallId,
-                                    approved = false,
-                                )
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ToolApprovalButton(
+                                text = stringResource(R.string.mcp_tool_approval_approve),
+                                icon = Icons.Rounded.Check,
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                enabled = !locked && canRespond,
+                                onClick = {
+                                    if (locked || !canRespond) return@ToolApprovalButton
+                                    locked = true
+                                    haptics.perform(HapticPattern.Pop)
+                                    chatService.respondToolApproval(
+                                        conversationId = conversationId ?: return@ToolApprovalButton,
+                                        toolCallId = toolCallId,
+                                        approved = true,
+                                        scope = approvalScope,
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            ToolApprovalButton(
+                                text = stringResource(R.string.mcp_tool_approval_reject),
+                                icon = Icons.Rounded.Close,
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                enabled = !locked && canRespond,
+                                onClick = {
+                                    if (locked || !canRespond) return@ToolApprovalButton
+                                    locked = true
+                                    haptics.perform(HapticPattern.Pop)
+                                    chatService.respondToolApproval(
+                                        conversationId = conversationId ?: return@ToolApprovalButton,
+                                        toolCallId = toolCallId,
+                                        approved = false,
+                                        scope = approvalScope,
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
 
@@ -529,6 +543,82 @@ fun ToolApprovalItem(
                 showArgumentsSheet = false
             }
         )
+    }
+}
+
+@Composable
+internal fun ApprovalScopeSelector(
+    selected: ToolApprovalScope,
+    onSelectedChange: (ToolApprovalScope) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.tool_approval_scope_title),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ApprovalScopeChip(
+                text = stringResource(R.string.tool_approval_scope_once),
+                selected = selected == ToolApprovalScope.Once,
+                onClick = { onSelectedChange(ToolApprovalScope.Once) },
+                modifier = Modifier.weight(1f),
+            )
+            ApprovalScopeChip(
+                text = stringResource(R.string.tool_approval_scope_conversation),
+                selected = selected == ToolApprovalScope.Conversation,
+                onClick = { onSelectedChange(ToolApprovalScope.Conversation) },
+                modifier = Modifier.weight(1f),
+            )
+            ApprovalScopeChip(
+                text = stringResource(R.string.tool_approval_scope_always),
+                selected = selected == ToolApprovalScope.Always,
+                onClick = { onSelectedChange(ToolApprovalScope.Always) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ApprovalScopeChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        shape = AppShapes.ButtonPill,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = selected, onClick = null)
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

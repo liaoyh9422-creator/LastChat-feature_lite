@@ -48,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,6 +82,7 @@ import me.rerere.ai.registry.ModelRegistry
 import me.rerere.ai.ui.AskUserState
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.ToolApprovalScope
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.getEffectiveDisplaySetting
 import me.rerere.rikkahub.data.model.Assistant
@@ -668,6 +670,7 @@ private fun CompactApprovalTimelineItem(
     var locked by remember(approval.toolName, approval.state) { mutableStateOf(false) }
     var expanded by remember(approval.toolCallId, approval.state) { mutableStateOf(approval.state == ToolApprovalState.Pending) }
     var showArgumentsSheet by remember(approval.toolCallId) { mutableStateOf(false) }
+    var approvalScope by remember(approval.toolCallId) { mutableStateOf(ToolApprovalScope.Once) }
 
     val subtitle = when (approval.state) {
         ToolApprovalState.Pending -> stringResource(R.string.mcp_tool_approval_subtitle, approvalLabel)
@@ -744,6 +747,11 @@ private fun CompactApprovalTimelineItem(
                 Text(text = stringResource(R.string.tool_approval_view_params))
             }
 
+            ApprovalScopeSelector(
+                selected = approvalScope,
+                onSelectedChange = { approvalScope = it },
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -763,6 +771,7 @@ private fun CompactApprovalTimelineItem(
                             conversationId = conversationId ?: return@ToolApprovalButton,
                             toolCallId = approval.toolCallId,
                             approved = true,
+                            scope = approvalScope,
                         )
                     },
                     modifier = Modifier.weight(1f),
@@ -781,6 +790,7 @@ private fun CompactApprovalTimelineItem(
                             conversationId = conversationId ?: return@ToolApprovalButton,
                             toolCallId = approval.toolCallId,
                             approved = false,
+                            scope = approvalScope,
                         )
                     },
                     modifier = Modifier.weight(1f),

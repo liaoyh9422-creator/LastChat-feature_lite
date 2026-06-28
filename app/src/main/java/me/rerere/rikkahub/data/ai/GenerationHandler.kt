@@ -491,7 +491,7 @@ class GenerationHandler(
                                 toolName = toolCall.toolName,
                                 state = ToolApprovalState.Pending,
                             )
-                            val approved = runCatching {
+                            val approval = runCatching {
                                 handler.requestApproval(
                                     ToolApprovalRequest(
                                         conversationId = cid,
@@ -500,7 +500,8 @@ class GenerationHandler(
                                         arguments = args,
                                     )
                                 )
-                            }.getOrElse { false }
+                            }.getOrElse { me.rerere.rikkahub.data.ai.ToolApprovalResponse(false) }
+                            val approved = approval.approved
                             updateToolApproval(
                                 toolCallId = resolvedToolCallId,
                                 toolName = toolCall.toolName,

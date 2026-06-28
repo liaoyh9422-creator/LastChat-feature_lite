@@ -351,11 +351,16 @@ class ChatVM(
         chatService.setPendingUiWelcomePhraseForAppContext(_conversationId, welcomePhrase)
     }
 
-    fun respondToolApproval(toolCallId: String, approved: Boolean) {
+    fun respondToolApproval(
+        toolCallId: String,
+        approved: Boolean,
+        scope: me.rerere.rikkahub.data.ai.ToolApprovalScope = me.rerere.rikkahub.data.ai.ToolApprovalScope.Once,
+    ) {
         chatService.respondToolApproval(
             conversationId = _conversationId,
             toolCallId = toolCallId,
             approved = approved,
+            scope = scope,
         )
     }
 

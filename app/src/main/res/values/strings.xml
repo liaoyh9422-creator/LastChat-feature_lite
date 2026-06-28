@@ -415,6 +415,10 @@
     <string name="mcp_tool_approval_reject">Reject</string>
     <string name="mcp_tool_approval_approved_calling">Approved, running %1$s…</string>
     <string name="mcp_tool_approval_rejected_result">User declined this tool call</string>
+    <string name="tool_approval_scope_title">Apply this decision</string>
+    <string name="tool_approval_scope_once">Once</string>
+    <string name="tool_approval_scope_conversation">This chat</string>
+    <string name="tool_approval_scope_always">Always</string>
     <string name="ask_user_title">Assistant is asking you</string>
     <string name="ask_user_multi_title">Assistant has %d questions for you</string>
     <string name="ask_user_step_title">Question</string>
@@ -741,6 +745,9 @@
     <string name="setting_display_page_embedding_retrieval_timeout_desc">If timeout, skip this retrieval. Unit: seconds</string>
     <string name="setting_display_page_use_last_turn_memory_title">Use Last Turn Memories</string>
     <string name="setting_display_page_use_last_turn_memory_desc">When memory retrieval is skipped, reuse memories injected in the last turn</string>
+    <string name="setting_advanced_page_tool_approval_title">Tool Approval Policies</string>
+    <string name="setting_advanced_page_tool_approval_reset_title">Clear remembered tool approvals</string>
+    <string name="setting_advanced_page_tool_approval_reset_desc">Remove all always-allow and always-deny decisions so future tool calls ask again.</string>
     <string name="setting_advanced_page_custom_request_title">Custom Request</string>
     <string name="setting_advanced_page_custom_request_json_mode_title">Raw JSON Editor</string>
     <string name="setting_advanced_page_custom_request_json_mode_desc">Use a single text box to edit JSON for custom headers and body.</string>

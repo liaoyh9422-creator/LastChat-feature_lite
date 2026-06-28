@@ -71,6 +71,7 @@ import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
 import me.rerere.rikkahub.data.ai.transformers.transforms
 import me.rerere.rikkahub.data.ai.transformers.visualTransforms
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getHttpRetryDelaySeconds
@@ -100,6 +101,8 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "GenerationHandler"
+private const val MAX_TOOL_OUTPUT_CHARS = 32 * 1024
+private const val TOOL_OUTPUT_PREVIEW_CHARS = 4 * 1024
 private const val SEARCH_WEB_TOOL_NAME = "search_web"
 private const val SEARCH_AGENT_TOOL_NAME = "search_agent"
 private val MEMORY_TOOL_NAMES = setOf("create_memory", "edit_memory", "delete_memory")
@@ -636,10 +639,17 @@ class GenerationHandler(
                     }
 
                     val toolOutput = result.extractToolResultMetadata()
+                    val hasShellAccess = toolsInternal.any { it.name == "workspace_shell" }
+                    val normalizedToolContent = maybeTruncateToolOutput(
+                        toolCallId = resolvedToolCallId,
+                        toolName = toolCall.toolName,
+                        content = toolOutput.content,
+                        hasShellAccess = hasShellAccess,
+                    )
                     results += UIMessagePart.ToolResult(
                         toolName = toolCall.toolName,
                         toolCallId = resolvedToolCallId,
-                        content = toolOutput.content,
+                        content = normalizedToolContent,
                         arguments = args,
                         metadata = mergeToolResultMetadata(toolCall.metadata, toolOutput.metadata)
                     )
@@ -1684,6 +1694,51 @@ class GenerationHandler(
             ?: return ToolExecutionOutput(content = this, metadata = null)
         val content = JsonObject(obj.filterKeys { key -> key != "_tool_result_metadata" })
         return ToolExecutionOutput(content = content, metadata = metadata)
+    }
+
+    private fun maybeTruncateToolOutput(
+        toolCallId: String,
+        toolName: String,
+        content: JsonElement,
+        hasShellAccess: Boolean,
+    ): JsonElement {
+        val obj = content as? JsonObject ?: return content
+        val stdout = obj["stdout"]?.jsonPrimitive?.contentOrNull ?: return content
+        val stderr = obj["stderr"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val totalChars = stdout.length + stderr.length
+        if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return content
+
+        Log.i(TAG, "maybeTruncateToolOutput: truncating tool $toolName/$toolCallId output ($totalChars chars)")
+
+        val fullText = buildString {
+            append(stdout)
+            if (stderr.isNotEmpty()) {
+                if (isNotEmpty()) append("\n\n[stderr]\n")
+                append(stderr)
+            }
+        }
+        val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+        val fileName = "${toolCallId}.txt"
+        val outputDir = File(context.filesDir, FileFolders.TOOL_OUTPUTS).apply { mkdirs() }
+        File(outputDir, fileName).writeText(fullText)
+
+        return buildJsonObject {
+            put("exitCode", obj["exitCode"] ?: JsonPrimitive(0))
+            put(
+                "stdout",
+                buildString {
+                    appendLine("[Tool output truncated: $totalChars characters total]")
+                    appendLine("Full output saved to: /tool_outputs/$fileName")
+                    appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
+                    appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
+                    appendLine()
+                    append(preview)
+                }
+            )
+            put("stderr", stderr.take(TOOL_OUTPUT_PREVIEW_CHARS))
+            obj["timedOut"]?.let { put("timedOut", it) }
+            put("truncated", JsonPrimitive(true))
+        }
     }
 
     private fun mergeToolResultMetadata(

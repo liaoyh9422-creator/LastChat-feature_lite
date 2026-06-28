@@ -24,9 +24,13 @@ import me.rerere.rikkahub.di.appModule
 import me.rerere.rikkahub.di.dataSourceModule
 import me.rerere.rikkahub.di.repositoryModule
 import me.rerere.rikkahub.di.viewModelModule
+import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.ModelCapabilityRepository
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.DatabaseUtil
+import me.rerere.workspace.WorkspaceManager
+import java.io.File
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -100,6 +104,15 @@ class LastChatApp : Application(), SingletonImageLoader.Factory {
 
         // delete temp files
         deleteTempFiles()
+
+        // cleanup stale tool output files
+        cleanupToolOutputs()
+
+        // cleanup workspace temp dirs (proot + rootfs /tmp)
+        cleanupWorkspaceTempDirs()
+
+        // check workspace integrity (remove orphaned DB records after backup restore)
+        checkWorkspaceIntegrity()
 
         // Schedule Spontaneous Worker
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
@@ -194,6 +207,39 @@ class LastChatApp : Application(), SingletonImageLoader.Factory {
             val dir = appTempFolder
             if (dir.exists()) {
                 dir.deleteRecursively()
+            }
+        }
+    }
+
+    private fun cleanupToolOutputs() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                val dir = File(filesDir, FileFolders.TOOL_OUTPUTS)
+                if (dir.exists()) {
+                    dir.deleteRecursively()
+                }
+            }.onFailure {
+                Log.e(TAG, "cleanupToolOutputs failed", it)
+            }
+        }
+    }
+
+    private fun cleanupWorkspaceTempDirs() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                get<WorkspaceManager>().cleanupAllTempDirs()
+            }.onFailure {
+                Log.e(TAG, "cleanupWorkspaceTempDirs failed", it)
+            }
+        }
+    }
+
+    private fun checkWorkspaceIntegrity() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                get<WorkspaceRepository>().checkIntegrity()
+            }.onFailure {
+                Log.e(TAG, "checkWorkspaceIntegrity failed", it)
             }
         }
     }

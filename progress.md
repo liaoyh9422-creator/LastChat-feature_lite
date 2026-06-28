@@ -1,8 +1,12 @@
 # Progress
 
-- Initialized planning files for workspace data-layer migration.
-- Confirmed next step is to wire WorkspaceEntity/DAO/Repository into target DB and DI.
-- Added WorkspaceEntity, WorkspaceDAO, AppDatabase workspace registration, migration 39->40, and initial WorkspaceRepository/DI wiring.
-- Added Assistant.workspaceId and Conversation.workspaceCwd model bindings.
-- Aligned ConversationRepository read/write mapping for workspaceCwd.
-- Restored WorkspaceRepository.cleanupAssistantReferences to clear assistant workspaceId when a workspace is deleted.
+- Completed the original workspace data-layer migration foundation: entity/DAO/repository wiring, DB migration, assistant/workspace bindings, and cleanup reference restoration.
+- Rebased the active task from data-layer migration to `rikkahub-master` parity work for the workspace terminal ecosystem.
+- Verified three P0 gaps to close first: `ProotShellRunner` bind mounts, workspace runtime prompt parity, and app-start workspace cleanup/integrity checks.
+- Verified two follow-up gaps: `/upload` workspace path bridging in `DocumentAsPromptTransformer`, and oversized tool-output persistence into `/tool_outputs`.
+- Started Phase 2 implementation for runtime parity after updating planning files.
+- Aligned `RepositoryModule` workspace shell bind mounts with source parity for `/skills`, `/tool_outputs`, and `/upload`.
+- Expanded `WorkspaceReminderTransformer` so the model now receives `/skills` usage guidance and `/upload` read-only semantics.
+- Added `LastChatApp` startup cleanup/integrity hooks for tool outputs, workspace temp dirs, and workspace repository integrity checks.
+- Rebuilt `DocumentAsPromptTransformer` to include `/upload/<file>` workspace path bridging for uploaded files.
+- Added a first-pass `GenerationHandler` tool-output truncation/persistence path that writes oversized shell output to `/tool_outputs/<toolCallId>.txt` when shell access exists.

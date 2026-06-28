@@ -1,17 +1,18 @@
-# Workspace migration plan
+# Workspace terminal parity plan
 
 ## Goal
-Migrate the workspace data-layer foundation from rikkahub-master into LastChat-feature_lite after the workspace module bootstrap is complete.
+Close the remaining workspace terminal parity gaps between `rikkahub-master` and `LastChat-feature_lite`, with priority on shell bind mounts, workspace runtime guidance, startup integrity cleanup, and upload/tool output ecosystem alignment.
 
 ## Phases
-- [complete] Phase 1: Inspect current DB/DI structure and source workspace data-layer files
-- [complete] Phase 2: Add WorkspaceEntity and WorkspaceDAO to current project
-- [complete] Phase 3: Register workspace table/DAO in AppDatabase and add DB migration
-- [complete] Phase 4: Add WorkspaceRepository and DI providers (manager/installer/dao/repository)
-- [in_progress] Phase 5: Bind Assistant/Conversation workspace fields and align cleanup logic
-- [pending] Phase 6: Run Gradle validation and summarize remaining gaps
+- [complete] Phase 1: Rebaseline plan/files against `rikkahub-master` and capture verified parity gaps
+- [complete] Phase 2: Align `ProotShellRunner` bind mounts for `/skills`, `/tool_outputs`, and `/upload`
+- [complete] Phase 3: Align workspace prompt guidance and upload path semantics used by transformers/tools
+- [complete] Phase 4: Add app-start workspace cleanup/integrity checks (and source-aligned tool output cleanup if still applicable)
+- [in_progress] Phase 5: Close remaining runtime parity gaps (`tool_outputs` persistence / terminal environment consistency)
+- [pending] Phase 6: Run targeted validation/build and summarize residual gaps
 
 ## Notes
-- Current target project AppDatabase version is 39.
-- Need a safe migration to create workspaces table, likely 39 -> 40 manual migration.
-- This phase is data-layer only; UI/routes/viewmodels for workspaces come later.
+- Source baseline: `/storage/emulated/0/整理归档/rikkahub-master`
+- Target repo already contains the terminal UI/session implementation; the current work is runtime ecosystem parity, not first-time terminal UI creation.
+- `FileFolders.UPLOAD` and `FileFolders.TOOL_OUTPUTS` already exist in target, so bind-mount and transformer parity can be completed locally.
+- Full completion still requires runtime validation evidence; until then, progress claims stay at code-written level.

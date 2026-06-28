@@ -149,6 +149,7 @@ import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.ui.draw.rotate
 import me.rerere.rikkahub.ui.components.ui.ToastType
 import me.rerere.rikkahub.ui.components.crop.CropImageScreen
@@ -1892,14 +1893,38 @@ private fun FilesPicker(
                         )
                     },
                     trailingContent = {
-                        if (boundWorkspace != null && boundWorkspace.shellStatus == WorkspaceShellStatus.READY.name) {
-                            TextButton(onClick = {
-                                showWorkspaceCwdPicker = true
-                            }) {
-                                Text(
-                                    text = conversation.workspaceCwd ?: "/workspace",
-                                    maxLines = 1,
-                                )
+                        if (boundWorkspace != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    onDismiss()
+                                    navController.navigate(Screen.WorkspaceDetail(boundWorkspace.id))
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Settings,
+                                        contentDescription = stringResource(R.string.workspace_detail),
+                                    )
+                                }
+                                if (boundWorkspace.shellStatus != WorkspaceShellStatus.DISABLED.name) {
+                                    IconButton(onClick = {
+                                        onDismiss()
+                                        navController.navigate(Screen.WorkspaceTerminal(boundWorkspace.id))
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Terminal,
+                                            contentDescription = stringResource(R.string.workspace_terminal),
+                                        )
+                                    }
+                                }
+                                if (boundWorkspace.shellStatus == WorkspaceShellStatus.READY.name) {
+                                    TextButton(onClick = {
+                                        showWorkspaceCwdPicker = true
+                                    }) {
+                                        Text(
+                                            text = conversation.workspaceCwd ?: "/workspace",
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
                             }
                         }
                     },

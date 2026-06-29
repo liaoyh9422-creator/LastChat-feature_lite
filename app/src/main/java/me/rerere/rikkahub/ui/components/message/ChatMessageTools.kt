@@ -136,11 +136,16 @@ private fun stepLabelFinal() = stringResource(R.string.search_agent_step_final)
 internal fun toolApprovalDisplayName(toolName: String): String {
     return when (toolName) {
         "workspace_list" -> stringResource(R.string.tool_approval_workspace_list)
+        "workspace_stat" -> "Inspect workspace path"
+        "workspace_glob" -> "Find workspace files"
+        "workspace_grep" -> "Search workspace text"
         "workspace_read_file" -> stringResource(R.string.tool_approval_workspace_read_file)
         "workspace_write_file" -> stringResource(R.string.tool_approval_workspace_write_file)
+        "workspace_edit_file" -> "Edit workspace file"
         "workspace_mkdir" -> stringResource(R.string.tool_approval_workspace_mkdir)
         "workspace_delete" -> stringResource(R.string.tool_approval_workspace_delete)
         "workspace_rename" -> stringResource(R.string.tool_approval_workspace_rename)
+        "workspace_shell" -> "Run workspace shell"
         "eval_python" -> stringResource(R.string.chat_message_tool_run_python_generic)
         else -> toolName
     }
@@ -221,6 +226,9 @@ fun ToolCallItem(
                             R.string.chat_message_tool_workspace_list,
                             arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"
                         )
+                        "workspace_stat" -> "Workspace: Stat ${arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"}"
+                        "workspace_glob" -> "Workspace: Glob ${arguments.jsonObject["pattern"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""}"
+                        "workspace_grep" -> "Workspace: Grep ${arguments.jsonObject["query"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""}"
                         "workspace_read_file" -> stringResource(
                             R.string.chat_message_tool_workspace_read_file,
                             arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"

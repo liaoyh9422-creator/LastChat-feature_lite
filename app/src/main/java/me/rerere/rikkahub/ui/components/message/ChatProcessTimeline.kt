@@ -902,6 +902,9 @@ private fun toolTimelineTitle(
             R.string.chat_message_tool_workspace_list,
             arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"
         )
+        "workspace_stat" -> "Workspace: Stat ${arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"}"
+        "workspace_glob" -> "Workspace: Glob ${arguments.jsonObject["pattern"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""}"
+        "workspace_grep" -> "Workspace: Grep ${arguments.jsonObject["query"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""}"
         "workspace_read_file" -> stringResource(
             R.string.chat_message_tool_workspace_read_file,
             arguments.jsonObject["path"]?.jsonPrimitiveOrNull?.contentOrNull?.ifBlank { "/" } ?: "/"

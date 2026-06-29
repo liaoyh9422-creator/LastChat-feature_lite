@@ -144,6 +144,16 @@ class WorkspaceRepository(
         manager.listFiles(workspace.root, path, area)
     }
 
+    suspend fun statPath(
+        id: String,
+        area: WorkspaceStorageArea,
+        path: String,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        manager.statPath(workspace.root, path, area)
+    }
+
     suspend fun readText(
         id: String,
         path: String,
@@ -217,6 +227,39 @@ class WorkspaceRepository(
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
         manager.moveFile(workspace.root, source, target, overwrite)
+    }
+
+    suspend fun createDirectory(
+        id: String,
+        path: String,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        manager.writeText(workspace.root, "$path/.keep", "", overwrite = true)
+        manager.statPath(workspace.root, path, WorkspaceStorageArea.FILES)
+    }
+
+    suspend fun glob(
+        id: String,
+        pattern: String,
+        path: String = "",
+    ): List<WorkspaceFileEntry> = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        manager.glob(workspace.root, pattern, path)
+    }
+
+    suspend fun grep(
+        id: String,
+        query: String,
+        path: String = "",
+        regex: Boolean = false,
+        ignoreCase: Boolean = true,
+        includeGlob: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: error("Workspace not found: $id")
+        manager.ensureWorkspace(workspace.root)
+        manager.grep(workspace.root, query, path, regex, ignoreCase, includeGlob)
     }
 
     suspend fun executeCommand(

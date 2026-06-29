@@ -20,9 +20,16 @@ private const val SHELL_TIMEOUT_MAX_SECONDS = 600L
 private const val MAX_READ_FILE_BYTES = 8L * 1024 * 1024
 
 val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
+    "workspace_list" to false,
+    "workspace_stat" to false,
+    "workspace_glob" to false,
+    "workspace_grep" to false,
     "workspace_read_file" to false,
     "workspace_write_file" to false,
     "workspace_edit_file" to false,
+    "workspace_mkdir" to false,
+    "workspace_delete" to true,
+    "workspace_rename" to false,
     "workspace_shell" to true,
 )
 
@@ -41,9 +48,16 @@ suspend fun createWorkspaceTools(
     val shellCwd = cwd?.removePrefix("/workspace/")?.removePrefix("/workspace")
 
     return listOf(
+        createListTool(workspaceId, ::needsApproval, workspaceRepository),
+        createStatTool(workspaceId, ::needsApproval, workspaceRepository),
+        createGlobTool(workspaceId, ::needsApproval, workspaceRepository),
+        createGrepTool(workspaceId, ::needsApproval, workspaceRepository),
         createReadFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createWriteFileTool(workspaceId, ::needsApproval, workspaceRepository),
         createEditFileTool(workspaceId, ::needsApproval, workspaceRepository),
+        createMkdirTool(workspaceId, ::needsApproval, workspaceRepository),
+        createDeleteTool(workspaceId, ::needsApproval, workspaceRepository),
+        createRenameTool(workspaceId, ::needsApproval, workspaceRepository),
         createShellTool(workspaceId, ::needsApproval, workspaceRepository, shellCwd),
     )
 }
@@ -52,6 +66,165 @@ private val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp",
 
 private fun String.isImagePath(): Boolean =
     substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
+private fun createListTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_list",
+    description = "List files and directories using the assistant's bound workspace Rootfs. Paths must be absolute inside Rootfs. Use /workspace for the workspace files area.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = false)
+                put("area", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional area selector: files or linux. Defaults to automatic path-based resolution.")
+                })
+            },
+            required = emptyList(),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_list"),
+    execute = {
+        val params = it.jsonObject
+        val path = params.string("path")?.takeIf { p -> p.isNotBlank() } ?: "/workspace"
+        val (area, relativePath) = rootfsPathToAreaAndRelative(path, params.string("area"))
+        val entries = workspaceRepository.listFiles(workspaceId, area, relativePath)
+        buildJsonObject {
+            put("path", path)
+            put("area", area.name.lowercase())
+            put("entries", kotlinx.serialization.json.JsonArray(entries.map { entry -> entry.toJson() }))
+        }
+    },
+)
+
+private fun createStatTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_stat",
+    description = "Get metadata for a file or directory using the assistant's bound workspace Rootfs.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+                put("area", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional area selector: files or linux. Defaults to automatic path-based resolution.")
+                })
+            },
+            required = listOf("path"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_stat"),
+    execute = {
+        val params = it.jsonObject
+        val path = params.absolutePath("path")
+        val (area, relativePath) = rootfsPathToAreaAndRelative(path, params.string("area"))
+        val entry = workspaceRepository.statPath(workspaceId, area, relativePath)
+        buildJsonObject {
+            put("path", path)
+            put("area", area.name.lowercase())
+            put("entry", entry.toJson())
+        }
+    },
+)
+
+private fun createGlobTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_glob",
+    description = "Find files by glob pattern in the assistant's bound workspace files area.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("pattern", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Glob pattern, for example **/*.md or src/*.kt")
+                })
+                put("path", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional relative path inside /workspace to start from. Defaults to root.")
+                })
+            },
+            required = listOf("pattern"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_glob"),
+    execute = {
+        val params = it.jsonObject
+        val pattern = params.string("pattern") ?: error("pattern is required")
+        val path = params.string("path").orEmpty()
+        val entries = workspaceRepository.glob(workspaceId, pattern, path)
+        buildJsonObject {
+            put("pattern", pattern)
+            put("path", if (path.isBlank()) "/workspace" else "/workspace/${path.trimStart('/')}" )
+            put("entries", kotlinx.serialization.json.JsonArray(entries.map { entry -> entry.toJson() }))
+        }
+    },
+)
+
+private fun createGrepTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_grep",
+    description = "Search text in files within the assistant's bound workspace files area.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("query", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Search query")
+                })
+                put("path", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional relative path inside /workspace to search from. Defaults to root.")
+                })
+                put("regex", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Treat query as regex. Defaults to false.")
+                })
+                put("ignore_case", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Ignore case. Defaults to true.")
+                })
+                put("include", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional glob filter, for example **/*.kt")
+                })
+            },
+            required = listOf("query"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_grep"),
+    execute = {
+        val params = it.jsonObject
+        val query = params.string("query") ?: error("query is required")
+        val path = params.string("path").orEmpty()
+        val regex = params["regex"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        val ignoreCase = params["ignore_case"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        val includeGlob = params.string("include")
+        val matches = workspaceRepository.grep(workspaceId, query, path, regex, ignoreCase, includeGlob)
+        buildJsonObject {
+            put("query", query)
+            put("path", if (path.isBlank()) "/workspace" else "/workspace/${path.trimStart('/')}" )
+            put("matches", kotlinx.serialization.json.JsonArray(matches.map { match ->
+                buildJsonObject {
+                    put("path", match.path)
+                    put("line", match.line)
+                    put("text", match.text)
+                }
+            }))
+        }
+    },
+)
 
 private fun createReadFileTool(
     workspaceId: String,
@@ -174,6 +347,115 @@ private fun createEditFileTool(
     },
 )
 
+private fun createMkdirTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_mkdir",
+    description = "Create a directory in the assistant's bound workspace Rootfs. Only /workspace paths are writable.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+            },
+            required = listOf("path"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_mkdir"),
+    execute = {
+        val path = it.jsonObject.absolutePath("path")
+        val (area, relativePath) = rootfsPathToAreaAndRelative(path)
+        require(area == WorkspaceStorageArea.FILES) { "Only /workspace paths are creatable in the current migration target" }
+        val entry = workspaceRepository.createDirectory(workspaceId, relativePath)
+        buildJsonObject {
+            put("path", path)
+            put("ok", true)
+            put("entry", entry.toJson())
+        }
+    },
+)
+
+private fun createDeleteTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_delete",
+    description = "Delete a file or directory in the assistant's bound workspace Rootfs. Only /workspace paths are writable.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                putPathProperty(required = true)
+                put("recursive", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Delete directories recursively. Defaults to false.")
+                })
+            },
+            required = listOf("path"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_delete"),
+    execute = {
+        val params = it.jsonObject
+        val path = params.absolutePath("path")
+        val recursive = params["recursive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        val (area, relativePath) = rootfsPathToAreaAndRelative(path)
+        require(area == WorkspaceStorageArea.FILES) { "Only /workspace paths are deletable in the current migration target" }
+        val deleted = workspaceRepository.deleteFile(workspaceId, area, relativePath, recursive)
+        buildJsonObject {
+            put("path", path)
+            put("deleted", deleted)
+        }
+    },
+)
+
+private fun createRenameTool(
+    workspaceId: String,
+    needsApproval: (String) -> Boolean,
+    workspaceRepository: WorkspaceRepository,
+) = Tool(
+    name = "workspace_rename",
+    description = "Rename or move a file or directory within the assistant's bound workspace files area.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("from", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Absolute source path inside Rootfs")
+                })
+                put("to", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Absolute destination path inside Rootfs")
+                })
+                put("overwrite", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Overwrite destination if it exists. Defaults to false.")
+                })
+            },
+            required = listOf("from", "to"),
+        )
+    },
+    requiresUserApproval = needsApproval("workspace_rename"),
+    execute = {
+        val params = it.jsonObject
+        val from = params.absolutePath("from")
+        val to = params.absolutePath("to")
+        val overwrite = params["overwrite"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        val (fromArea, fromPath) = rootfsPathToAreaAndRelative(from)
+        val (toArea, toPath) = rootfsPathToAreaAndRelative(to)
+        require(fromArea == WorkspaceStorageArea.FILES && toArea == WorkspaceStorageArea.FILES) {
+            "Only /workspace paths are renameable in the current migration target"
+        }
+        val entry = workspaceRepository.moveFile(workspaceId, fromPath, toPath, overwrite)
+        buildJsonObject {
+            put("from", from)
+            put("to", to)
+            put("entry", entry.toJson())
+        }
+    },
+)
+
 private fun createShellTool(
     workspaceId: String,
     needsApproval: (String) -> Boolean,
@@ -247,8 +529,23 @@ private suspend fun WorkspaceRepository.readTextInRootfs(
     return buffer.toString(Charsets.UTF_8.name())
 }
 
-private fun rootfsPathToAreaAndRelative(path: String): Pair<WorkspaceStorageArea, String> {
+private fun rootfsPathToAreaAndRelative(
+    path: String,
+    areaHint: String? = null,
+): Pair<WorkspaceStorageArea, String> {
+    val hintedArea = when (areaHint?.trim()?.lowercase()) {
+        "files", "workspace" -> WorkspaceStorageArea.FILES
+        "linux", "rootfs" -> WorkspaceStorageArea.LINUX
+        else -> null
+    }
     val trimmed = path.trimEnd('/')
+    if (hintedArea != null) {
+        val relative = when (hintedArea) {
+            WorkspaceStorageArea.FILES -> trimmed.removePrefix("/workspace").trimStart('/')
+            WorkspaceStorageArea.LINUX -> trimmed.trimStart('/').removePrefix("workspace/")
+        }
+        return hintedArea to relative
+    }
     return if (trimmed == "/workspace" || trimmed.startsWith("/workspace/")) {
         WorkspaceStorageArea.FILES to trimmed.removePrefix("/workspace").trimStart('/')
     } else {

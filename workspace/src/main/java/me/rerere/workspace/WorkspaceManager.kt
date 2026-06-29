@@ -47,6 +47,13 @@ class WorkspaceManager(
     ): List<WorkspaceFileEntry> =
         fileSystem.list(areaDir(root, area), path)
 
+    fun statPath(
+        root: String,
+        path: String,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+    ): WorkspaceFileEntry =
+        fileSystem.stat(areaDir(root, area), path)
+
     fun readText(
         root: String,
         path: String,

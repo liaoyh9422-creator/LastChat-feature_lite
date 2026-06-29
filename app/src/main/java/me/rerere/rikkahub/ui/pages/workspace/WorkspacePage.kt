@@ -40,6 +40,7 @@ import me.rerere.rikkahub.ui.components.nav.OneUITopAppBar
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.pages.setting.components.SettingsGroup
 import me.rerere.rikkahub.ui.pages.setting.components.SettingGroupItem
+import me.rerere.rikkahub.utils.plus
 import me.rerere.workspace.WorkspaceShellStatus
 import org.koin.androidx.compose.koinViewModel
 

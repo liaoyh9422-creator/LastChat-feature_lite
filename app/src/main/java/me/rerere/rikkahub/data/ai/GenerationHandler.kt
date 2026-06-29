@@ -427,6 +427,7 @@ class GenerationHandler(
                             context = context,
                             model = model,
                             assistant = assistant,
+                            settings = settings,
                         )
                     )
                 )
@@ -477,6 +478,7 @@ class GenerationHandler(
                             context = context,
                             model = model,
                             assistant = assistant,
+                            settings = settings,
                         )
                     )
                 )
@@ -715,7 +717,8 @@ class GenerationHandler(
                         transformers = outputTransformers,
                         context = context,
                         model = model,
-                        assistant = assistant
+                        assistant = assistant,
+                        settings = settings,
                     )
                 )
             )

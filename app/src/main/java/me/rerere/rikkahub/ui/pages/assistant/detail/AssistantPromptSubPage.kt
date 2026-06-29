@@ -381,7 +381,8 @@ fun AssistantPromptSubPage(
                                         ctx = TransformerContext(
                                             context = context,
                                             model = Model(modelId = "gpt-4o", displayName = "GPT-4o"),
-                                            assistant = assistant
+                                            assistant = assistant,
+                                            settings = vm.settings.value,
                                         ),
                                         messages = rawMessages
                                     )

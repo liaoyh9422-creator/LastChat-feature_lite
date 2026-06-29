@@ -1,12 +1,10 @@
 package me.rerere.rikkahub.data.db.entity
-
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import me.rerere.rikkahub.utils.JsonInstant
-import me.rerere.workspace.Workspace
-import me.rerere.workspace.WorkspaceShellStatus
+
 
 @Entity(
     tableName = "workspaces",
@@ -23,7 +21,7 @@ data class WorkspaceEntity(
     @ColumnInfo("root")
     val root: String,
     @ColumnInfo("shell_status")
-    val shellStatus: String = WorkspaceShellStatus.DISABLED.name,
+    val shellStatus: String = "DISABLED",
     @ColumnInfo("created_at")
     val createdAt: Long,
     @ColumnInfo("updated_at")
@@ -36,15 +34,4 @@ data class WorkspaceEntity(
     fun toolApprovalOverrides(): Map<String, Boolean> = runCatching {
         JsonInstant.decodeFromString<Map<String, Boolean>>(toolApprovals)
     }.getOrDefault(emptyMap())
-
-    fun toWorkspace(): Workspace = Workspace(
-        id = id,
-        name = name,
-        root = root,
-        shellStatus = runCatching { WorkspaceShellStatus.valueOf(shellStatus) }
-            .getOrDefault(WorkspaceShellStatus.DISABLED),
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-        lastAccessAt = lastAccessAt,
-    )
 }

@@ -388,9 +388,9 @@ private fun WorkspaceFilesPage(
                     Text(entry.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (entry.isDirectory) {
-                            Button(onClick = { onOpen(entry) }) { Text(stringResource(R.string.open)) }
+                            Button(onClick = { onOpen(entry) }) { Text("Open") }
                         } else {
-                            Button(onClick = { onExport(entry) }) { Text(stringResource(R.string.export)) }
+                            Button(onClick = { onExport(entry) }) { Text("Export") }
                             Button(onClick = { onShare(entry) }) { Text(stringResource(R.string.share)) }
                         }
                         Button(onClick = { onDelete(entry) }) { Text(stringResource(R.string.delete)) }

@@ -53,4 +53,6 @@ data class ConversationEntity(
     val contextSummaryBoundaries: String = "[]",
     @ColumnInfo(name = "session_memories", defaultValue = "[]")
     val sessionMemories: String = "[]",
+    @ColumnInfo(name = "workspace_cwd", defaultValue = "''")
+    val workspaceCwd: String = "",
 )

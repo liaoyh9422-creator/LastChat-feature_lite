@@ -310,12 +310,6 @@ private fun TerminalSession.writeText(text: String) {
     write(bytes, 0, bytes.size)
 }
 
-private fun TerminalSession.finishIfRunning() {
-    runCatching { finishIfRunning() }.getOrElse {
-        runCatching { finish() }
-    }
-}
-
 private sealed interface TerminalSessionUiState {
     data object Loading : TerminalSessionUiState
     data object NotInstalled : TerminalSessionUiState
